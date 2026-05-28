@@ -221,7 +221,7 @@ app.post('/api/chat', async (req, res) => {
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 1000,
         system: HANDBOOK_CONTEXT,
-        messages
+        messages: messages.slice(-6)
       })
     });
 
