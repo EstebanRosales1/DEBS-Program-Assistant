@@ -237,6 +237,10 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', supabase: !!SUPABASE_URL, anthropic: !!ANTHROPIC_API_KEY });
 });
 
+app.get('/admin', (req, res) => {
+  res.sendFile('admin.html', { root: 'public' });
+});
+
 app.get('*', (req, res) => {
   res.sendFile('index.html', { root: 'public' });
 });
