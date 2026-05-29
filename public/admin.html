@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Handbook Admin — Medi-Cal Chat</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --navy: #0d1f3c;
+    --navy-light: #1e3d6e;
+    --gold: #c9a84c;
+    --gold-light: #e2c97e;
+    --cream: #f7f3eb;
+    --cream-dark: #ede8dc;
+    --text: #1a1a2e;
+    --muted: #6b7a8d;
+    --white: #ffffff;
+    --success: #2e7d5e;
+    --error: #c0392b;
+    --success-bg: #edf7f2;
+    --error-bg: #fdf0ee;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--cream);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  /* ── Login screen ── */
+  .login-screen {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--navy);
+  }
+
+  .login-box {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(201,168,76,0.2);
+    border-radius: 20px;
+    padding: 2.5rem;
+    width: 100%;
+    max-width: 380px;
+    text-align: center;
+  }
+
+  .login-badge {
+    width: 56px; height: 56px;
+    background: var(--gold);
+    border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'DM Serif Display', serif;
+    font-size: 22px; color: var(--navy);
+    margin: 0 auto 1.2rem;
+  }
+
+  .login-box h1 {
+    font-family: 'DM Serif Display', serif;
+    font-size: 1.4rem;
+    color: var(--white);
+    margin-bottom: 0.3rem;
+  }
+
+  .login-box p {
+    font-size: 0.82rem;
+    color: rgba(255,255,255,0.45);
+    margin-bottom: 1.5rem;
+    font-family: 'DM Mono', monospace;
+    letter-spacing: 0.03em;
+  }
+
+  .login-input {
+    width: 100%;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 10px;
+    padding: 12px 16px;
+    font-size: 0.9rem;
+    color: var(--white);
+    font-family: 'DM Mono', monospace;
+    outline: none;
+    margin-bottom: 1rem;
+    transition: border-color 0.2s;
+  }
+
+  .login-input:focus { border-color: var(--gold); }
+  .login-input::placeholder { color: rgba(255,255,255,0.25); }
+
+  .login-btn {
+    width: 100%;
+    background: var(--gold);
+    color: var(--navy);
+    border: none;
+    border-radius: 10px;
+    padding: 12px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    font-family: 'DM Sans', sans-serif;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+
+  .login-btn:hover { background: var(--gold-light); }
+
+  .login-error {
+    margin-top: 0.8rem;
+    font-size: 0.8rem;
+    color: #f08080;
+    font-family: 'DM Mono', monospace;
+  }
+
+  /* ── Main admin UI ── */
+  .admin-ui { display: none; }
+
+  header {
+    background: var(--navy);
+    padding: 0 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 64px;
+    border-bottom: 2px solid var(--gold);
+  }
+
+  .header-left { display: flex; align-items: center; gap: 14px; }
+
+  .logo-badge {
+    width: 36px; height: 36px;
+    background: var(--gold);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'DM Serif Display', serif;
+    font-size: 16px; color: var(--navy);
+  }
+
+  .header-title { font-family: 'DM Serif Display', serif; font-size: 1rem; color: var(--white); }
+  .header-sub { font-size: 0.65rem; color: var(--gold-light); font-family: 'DM Mono', monospace; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  .header-right { display: flex; gap: 10px; align-items: center; }
+
+  .chat-link {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--gold);
+    text-decoration: none;
+    border: 1px solid rgba(201,168,76,0.3);
+    padding: 5px 12px;
+    border-radius: 20px;
+    transition: all 0.2s;
+  }
+  .chat-link:hover { background: rgba(201,168,76,0.1); }
+
+  .logout-btn {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.7rem;
+    color: rgba(255,255,255,0.4);
+    background: none;
+    border: 1px solid rgba(255,255,255,0.1);
+    padding: 5px 12px;
+    border-radius: 20px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .logout-btn:hover { color: rgba(255,255,255,0.7); }
+
+  .main {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+  }
+
+  .full-width { grid-column: 1 / -1; }
+
+  /* ── Cards ── */
+  .card {
+    background: var(--white);
+    border: 1px solid var(--cream-dark);
+    border-radius: 16px;
+    padding: 1.5rem;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 1.2rem;
+  }
+
+  .card-icon {
+    width: 34px; height: 34px;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px;
+    flex-shrink: 0;
+  }
+
+  .icon-url { background: #e8f0fe; }
+  .icon-text { background: #e8f7f0; }
+  .icon-pdf { background: #fef3e8; }
+  .icon-db { background: #f3e8fe; }
+
+  .card-title {
+    font-family: 'DM Serif Display', serif;
+    font-size: 1rem;
+    color: var(--navy);
+  }
+
+  .card-desc {
+    font-size: 0.78rem;
+    color: var(--muted);
+    margin-top: 1px;
+  }
+
+  /* ── Form elements ── */
+  label {
+    display: block;
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: var(--muted);
+    margin-bottom: 5px;
+    font-family: 'DM Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  input[type="text"],
+  input[type="url"],
+  textarea {
+    width: 100%;
+    border: 1.5px solid var(--cream-dark);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 0.88rem;
+    font-family: 'DM Sans', sans-serif;
+    color: var(--text);
+    background: var(--cream);
+    outline: none;
+    transition: border-color 0.2s;
+    margin-bottom: 0.8rem;
+  }
+
+  input[type="text"]:focus,
+  input[type="url"]:focus,
+  textarea:focus { border-color: var(--gold); background: var(--white); }
+
+  textarea { resize: vertical; min-height: 100px; }
+
+  .file-drop {
+    border: 2px dashed var(--cream-dark);
+    border-radius: 10px;
+    padding: 1.5rem;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    margin-bottom: 0.8rem;
+    background: var(--cream);
+  }
+
+  .file-drop:hover, .file-drop.dragover {
+    border-color: var(--gold);
+    background: rgba(201,168,76,0.05);
+  }
+
+  .file-drop-text {
+    font-size: 0.82rem;
+    color: var(--muted);
+    font-family: 'DM Mono', monospace;
+  }
+
+  .file-drop-text strong { color: var(--navy); display: block; font-size: 0.9rem; margin-bottom: 3px; }
+
+  .file-selected {
+    font-size: 0.8rem;
+    color: var(--success);
+    font-family: 'DM Mono', monospace;
+    margin-top: 5px;
+  }
+
+  input[type="file"] { display: none; }
+
+  .btn {
+    width: 100%;
+    background: var(--navy);
+    color: var(--gold);
+    border: none;
+    border-radius: 10px;
+    padding: 11px;
+    font-size: 0.88rem;
+    font-weight: 500;
+    font-family: 'DM Sans', sans-serif;
+    cursor: pointer;
+    transition: background 0.2s, transform 0.1s;
+  }
+
+  .btn:hover { background: var(--navy-light); }
+  .btn:active { transform: scale(0.98); }
+  .btn:disabled { background: var(--cream-dark); color: var(--muted); cursor: not-allowed; }
+
+  .btn-danger {
+    background: #fdf0ee;
+    color: var(--error);
+    border: 1px solid #f5c6c0;
+    font-size: 0.78rem;
+    padding: 6px 12px;
+    width: auto;
+    border-radius: 7px;
+  }
+  .btn-danger:hover { background: #f9ddd9; }
+
+  /* ── Status messages ── */
+  .status {
+    margin-top: 0.8rem;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 0.82rem;
+    font-family: 'DM Mono', monospace;
+    display: none;
+  }
+
+  .status.success { background: var(--success-bg); color: var(--success); display: block; }
+  .status.error { background: var(--error-bg); color: var(--error); display: block; }
+  .status.loading { background: #f0f4ff; color: #3b5bdb; display: block; }
+
+  /* ── Knowledge base table ── */
+  .kb-stats {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1.2rem;
+  }
+
+  .kb-stat {
+    background: var(--cream);
+    border-radius: 10px;
+    padding: 10px 16px;
+    flex: 1;
+    text-align: center;
+  }
+
+  .kb-stat-num {
+    font-family: 'DM Serif Display', serif;
+    font-size: 1.6rem;
+    color: var(--navy);
+    line-height: 1;
+  }
+
+  .kb-stat-label {
+    font-size: 0.7rem;
+    color: var(--muted);
+    font-family: 'DM Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-top: 3px;
+  }
+
+  .source-list { display: flex; flex-direction: column; gap: 0.5rem; }
+
+  .source-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    background: var(--cream);
+    border-radius: 8px;
+    font-size: 0.82rem;
+  }
+
+  .source-name { color: var(--text); font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .source-chunks { font-family: 'DM Mono', monospace; font-size: 0.75rem; color: var(--muted); margin: 0 12px; flex-shrink: 0; }
+
+  .refresh-btn {
+    background: none;
+    border: 1px solid var(--cream-dark);
+    border-radius: 7px;
+    padding: 5px 12px;
+    font-size: 0.75rem;
+    color: var(--muted);
+    cursor: pointer;
+    font-family: 'DM Mono', monospace;
+    transition: all 0.2s;
+  }
+  .refresh-btn:hover { border-color: var(--gold); color: var(--navy); }
+
+  .empty-state {
+    text-align: center;
+    padding: 2rem;
+    color: var(--muted);
+    font-size: 0.82rem;
+    font-family: 'DM Mono', monospace;
+  }
+
+  /* Progress bar */
+  .progress-bar {
+    width: 100%;
+    height: 4px;
+    background: var(--cream-dark);
+    border-radius: 2px;
+    margin-top: 0.6rem;
+    overflow: hidden;
+    display: none;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: var(--gold);
+    border-radius: 2px;
+    width: 0%;
+    transition: width 0.3s;
+  }
+
+  @media (max-width: 640px) {
+    .main { grid-template-columns: 1fr; }
+    .full-width { grid-column: 1; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Login Screen -->
+<div class="login-screen" id="login-screen">
+  <div class="login-box">
+    <div class="login-badge">MC</div>
+    <h1>Admin Portal</h1>
+    <p>MEDI-CAL HANDBOOK MANAGER</p>
+    <input type="password" class="login-input" id="login-key" placeholder="Enter admin password" onkeydown="if(event.key==='Enter') login()" />
+    <button class="login-btn" onclick="login()">Sign In</button>
+    <div class="login-error" id="login-error"></div>
+  </div>
+</div>
+
+<!-- Admin UI -->
+<div class="admin-ui" id="admin-ui">
+  <header>
+    <div class="header-left">
+      <div class="logo-badge">MC</div>
+      <div>
+        <div class="header-title">Handbook Admin</div>
+        <div class="header-sub">Knowledge Base Manager</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <a href="/" class="chat-link">← Back to Chat</a>
+      <button class="logout-btn" onclick="logout()">Sign Out</button>
+    </div>
+  </header>
+
+  <div class="main">
+
+    <!-- URL Ingestion -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon icon-url">🔗</div>
+        <div>
+          <div class="card-title">Add from URL</div>
+          <div class="card-desc">Fetch a handbook page by URL</div>
+        </div>
+      </div>
+      <label>Page Name</label>
+      <input type="text" id="url-name" placeholder="e.g. MAGI MC Eligibility" />
+      <label>URL</label>
+      <input type="url" id="url-input" placeholder="https://stgenssa.sccgov.org/..." />
+      <button class="btn" id="url-btn" onclick="ingestUrl()">Fetch & Add to Knowledge Base</button>
+      <div class="progress-bar" id="url-progress"><div class="progress-fill" id="url-progress-fill"></div></div>
+      <div class="status" id="url-status"></div>
+    </div>
+
+    <!-- Text Ingestion -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon icon-text">📝</div>
+        <div>
+          <div class="card-title">Add Plain Text</div>
+          <div class="card-desc">Paste policy text directly</div>
+        </div>
+      </div>
+      <label>Source Name</label>
+      <input type="text" id="text-name" placeholder="e.g. Income Limits 2026" />
+      <label>Content</label>
+      <textarea id="text-input" placeholder="Paste your handbook text here..."></textarea>
+      <button class="btn" id="text-btn" onclick="ingestText()">Add to Knowledge Base</button>
+      <div class="status" id="text-status"></div>
+    </div>
+
+    <!-- PDF Ingestion -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon icon-pdf">📄</div>
+        <div>
+          <div class="card-title">Upload PDF</div>
+          <div class="card-desc">Upload a PDF handbook or policy doc</div>
+        </div>
+      </div>
+      <label>Document Name</label>
+      <input type="text" id="pdf-name" placeholder="e.g. Medi-Cal Policy Manual 2026" />
+      <label>PDF File</label>
+      <div class="file-drop" id="file-drop" onclick="document.getElementById('pdf-input').click()" ondragover="dragOver(event)" ondragleave="dragLeave(event)" ondrop="dropFile(event)">
+        <div class="file-drop-text">
+          <strong>Click to choose or drag & drop</strong>
+          PDF files up to 20MB
+        </div>
+        <div class="file-selected" id="file-selected"></div>
+      </div>
+      <input type="file" id="pdf-input" accept=".pdf" onchange="fileSelected(this)" />
+      <button class="btn" id="pdf-btn" onclick="ingestPdf()">Upload & Add to Knowledge Base</button>
+      <div class="status" id="pdf-status"></div>
+    </div>
+
+    <!-- Knowledge Base -->
+    <div class="card">
+      <div class="card-header" style="justify-content:space-between">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div class="card-icon icon-db">🗄️</div>
+          <div>
+            <div class="card-title">Knowledge Base</div>
+            <div class="card-desc">All loaded handbook sections</div>
+          </div>
+        </div>
+        <button class="refresh-btn" onclick="loadKnowledgeBase()">↺ Refresh</button>
+      </div>
+      <div class="kb-stats">
+        <div class="kb-stat">
+          <div class="kb-stat-num" id="kb-total">—</div>
+          <div class="kb-stat-label">Total Chunks</div>
+        </div>
+        <div class="kb-stat">
+          <div class="kb-stat-num" id="kb-sources">—</div>
+          <div class="kb-stat-label">Sources</div>
+        </div>
+      </div>
+      <div class="source-list" id="source-list">
+        <div class="empty-state">Loading knowledge base...</div>
+      </div>
+      <div class="status" id="kb-status"></div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+let adminKey = '';
+
+function login() {
+  const key = document.getElementById('login-key').value.trim();
+  if (!key) return;
+
+  // Verify by calling the list endpoint
+  fetch('/api/admin/list', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ adminKey: key })
+  }).then(r => r.json()).then(data => {
+    if (data.error === 'Unauthorized') {
+      document.getElementById('login-error').textContent = 'Incorrect password';
+    } else {
+      adminKey = key;
+      document.getElementById('login-screen').style.display = 'none';
+      document.getElementById('admin-ui').style.display = 'block';
+      loadKnowledgeBase();
+    }
+  }).catch(() => {
+    document.getElementById('login-error').textContent = 'Connection error — try again';
+  });
+}
+
+function logout() {
+  adminKey = '';
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('admin-ui').style.display = 'none';
+  document.getElementById('login-key').value = '';
+}
+
+function setStatus(id, type, message) {
+  const el = document.getElementById(id);
+  el.className = `status ${type}`;
+  el.textContent = message;
+}
+
+// ── URL ingestion ──────────────────────────────────────────────
+async function ingestUrl() {
+  const url = document.getElementById('url-input').value.trim();
+  const name = document.getElementById('url-name').value.trim();
+  if (!url) return setStatus('url-status', 'error', 'Please enter a URL');
+  if (!name) return setStatus('url-status', 'error', 'Please enter a name for this source');
+
+  document.getElementById('url-btn').disabled = true;
+  setStatus('url-status', 'loading', '⏳ Fetching and processing... this may take a minute');
+
+  try {
+    const res = await fetch('/api/admin/ingest-url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminKey, url, name })
+    });
+    const data = await res.json();
+
+    if (data.error) {
+      setStatus('url-status', 'error', `❌ ${data.error}`);
+    } else {
+      setStatus('url-status', 'success', `✅ Added "${name}" — ${data.chunks} chunks stored`);
+      document.getElementById('url-input').value = '';
+      document.getElementById('url-name').value = '';
+      loadKnowledgeBase();
+    }
+  } catch (err) {
+    setStatus('url-status', 'error', `❌ ${err.message}`);
+  }
+
+  document.getElementById('url-btn').disabled = false;
+}
+
+// ── Text ingestion ─────────────────────────────────────────────
+async function ingestText() {
+  const text = document.getElementById('text-input').value.trim();
+  const name = document.getElementById('text-name').value.trim();
+  if (!text) return setStatus('text-status', 'error', 'Please paste some text');
+  if (!name) return setStatus('text-status', 'error', 'Please enter a source name');
+
+  document.getElementById('text-btn').disabled = true;
+  setStatus('text-status', 'loading', '⏳ Processing text...');
+
+  try {
+    const res = await fetch('/api/admin/ingest-text', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminKey, text, name })
+    });
+    const data = await res.json();
+
+    if (data.error) {
+      setStatus('text-status', 'error', `❌ ${data.error}`);
+    } else {
+      setStatus('text-status', 'success', `✅ Added "${name}" — ${data.chunks} chunks stored`);
+      document.getElementById('text-input').value = '';
+      document.getElementById('text-name').value = '';
+      loadKnowledgeBase();
+    }
+  } catch (err) {
+    setStatus('text-status', 'error', `❌ ${err.message}`);
+  }
+
+  document.getElementById('text-btn').disabled = false;
+}
+
+// ── PDF ingestion ──────────────────────────────────────────────
+let selectedPdfFile = null;
+
+function fileSelected(input) {
+  selectedPdfFile = input.files[0];
+  document.getElementById('file-selected').textContent = `Selected: ${selectedPdfFile.name}`;
+}
+
+function dragOver(e) { e.preventDefault(); document.getElementById('file-drop').classList.add('dragover'); }
+function dragLeave(e) { document.getElementById('file-drop').classList.remove('dragover'); }
+function dropFile(e) {
+  e.preventDefault();
+  document.getElementById('file-drop').classList.remove('dragover');
+  selectedPdfFile = e.dataTransfer.files[0];
+  document.getElementById('file-selected').textContent = `Selected: ${selectedPdfFile.name}`;
+}
+
+async function ingestPdf() {
+  if (!selectedPdfFile) return setStatus('pdf-status', 'error', 'Please select a PDF file');
+  const name = document.getElementById('pdf-name').value.trim() || selectedPdfFile.name;
+
+  document.getElementById('pdf-btn').disabled = true;
+  setStatus('pdf-status', 'loading', '⏳ Uploading and processing PDF... this may take a few minutes');
+
+  try {
+    const formData = new FormData();
+    formData.append('adminKey', adminKey);
+    formData.append('name', name);
+    formData.append('pdf', selectedPdfFile);
+
+    const res = await fetch('/api/admin/ingest-pdf', { method: 'POST', body: formData });
+    const data = await res.json();
+
+    if (data.error) {
+      setStatus('pdf-status', 'error', `❌ ${data.error}`);
+    } else {
+      setStatus('pdf-status', 'success', `✅ Added "${name}" — ${data.chunks} chunks stored`);
+      selectedPdfFile = null;
+      document.getElementById('file-selected').textContent = '';
+      document.getElementById('pdf-name').value = '';
+      loadKnowledgeBase();
+    }
+  } catch (err) {
+    setStatus('pdf-status', 'error', `❌ ${err.message}`);
+  }
+
+  document.getElementById('pdf-btn').disabled = false;
+}
+
+// ── Knowledge base ─────────────────────────────────────────────
+async function loadKnowledgeBase() {
+  try {
+    const res = await fetch('/api/admin/list', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminKey })
+    });
+    const data = await res.json();
+
+    document.getElementById('kb-total').textContent = data.total || 0;
+    const sources = data.sources || {};
+    const sourceCount = Object.keys(sources).length;
+    document.getElementById('kb-sources').textContent = sourceCount;
+
+    const list = document.getElementById('source-list');
+    if (sourceCount === 0) {
+      list.innerHTML = '<div class="empty-state">No content yet — add URLs, text, or PDFs above</div>';
+      return;
+    }
+
+    list.innerHTML = Object.entries(sources).map(([src, count]) => `
+      <div class="source-row">
+        <span class="source-name" title="${src}">${src}</span>
+        <span class="source-chunks">${count} chunks</span>
+        <button class="btn btn-danger" onclick="deleteSource('${src.replace(/'/g, "\\'")}')">Remove</button>
+      </div>
+    `).join('');
+
+  } catch (err) {
+    setStatus('kb-status', 'error', `❌ ${err.message}`);
+  }
+}
+
+async function deleteSource(source) {
+  if (!confirm(`Remove all chunks from "${source}"?`)) return;
+
+  try {
+    const res = await fetch('/api/admin/delete-source', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminKey, source })
+    });
+    const data = await res.json();
+    if (data.success) {
+      setStatus('kb-status', 'success', `✅ Removed "${source}"`);
+      loadKnowledgeBase();
+    }
+  } catch (err) {
+    setStatus('kb-status', 'error', `❌ ${err.message}`);
+  }
+}
+</script>
+</body>
+</html>
