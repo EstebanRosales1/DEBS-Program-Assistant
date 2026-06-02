@@ -57,27 +57,43 @@ async function getEmbedding(text, inputType = 'document') {
   return data.data[0].embedding;
 }
 
+function supabaseHeaders(extra = {}) {
+  return {
+    'Content-Type': 'application/json',
+    'apikey': SUPABASE_SECRET_KEY,
+    'Authorization': `Bearer ${SUPABASE_SECRET_KEY}`,
+    'X-Client-Info': 'supabase-js/2.0.0',
+    ...extra
+  };
+}
+
+function supabaseUrl(path) {
+  const base = SUPABASE_URL.replace(/\/rest\/v1\/?$/, '');
+  return `${base}/rest/v1/${path}`;
+}
+
 async function storeChunk(chunk, embedding) {
-  const response = await fetch(`${SUPABASE_URL}/rest/v1/documents`, {
+  const url = supabaseUrl('documents');
+  const response = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'apikey': SUPABASE_SECRET_KEY,
-      'Authorization': `Bearer ${SUPABASE_SECRET_KEY}`,
-      'Prefer': 'return=minimal'
-    },
+    headers: supabaseHeaders({ 'Prefer': 'return=minimal' }),
     body: JSON.stringify({ content: chunk.content, metadata: chunk.metadata, embedding })
   });
-  if (!response.ok) throw new Error(`Supabase store error: ${await response.text()}`);
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Supabase store error: ${text}`);
+  }
 }
 
 async function searchHandbook(embedding) {
-  const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/match_documents`, {
+  const url = supabaseUrl('rpc/match_documents');
+  const response = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_SECRET_KEY, 'Authorization': `Bearer ${SUPABASE_SECRET_KEY}` },
+    headers: supabaseHeaders(),
     body: JSON.stringify({ query_embedding: embedding, match_threshold: 0.5, match_count: 5 })
   });
-  return await response.json();
+  const text = await response.text();
+  try { return JSON.parse(text); } catch { throw new Error(`Supabase search error: ${text}`); }
 }
 
 async function ingestChunks(chunks, progressCallback) {
@@ -193,8 +209,8 @@ app.post('/api/admin/list', async (req, res) => {
   if (adminKey !== ADMIN_KEY) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
-    const response = await fetch(`${SUPABASE_URL}/rest/v1/documents?select=id,metadata&order=id.asc`, {
-      headers: { 'apikey': SUPABASE_SECRET_KEY, 'Authorization': `Bearer ${SUPABASE_SECRET_KEY}` }
+    const response = await fetch(supabaseUrl('documents?select=id,metadata&order=id.asc'), {
+      headers: supabaseHeaders()
     });
     const docs = await response.json();
 
@@ -219,10 +235,10 @@ app.post('/api/admin/delete-source', async (req, res) => {
 
   try {
     const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/documents?metadata->>source=eq.${encodeURIComponent(source)}`,
+      supabaseUrl(`documents?metadata->>source=eq.${encodeURIComponent(source)}`),
       {
         method: 'DELETE',
-        headers: { 'apikey': SUPABASE_SECRET_KEY, 'Authorization': `Bearer ${SUPABASE_SECRET_KEY}` }
+        headers: supabaseHeaders()
       }
     );
     res.json({ success: response.ok });
