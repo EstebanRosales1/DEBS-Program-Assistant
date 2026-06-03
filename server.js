@@ -90,9 +90,10 @@ async function searchHandbook(embedding) {
   const response = await fetch(url, {
     method: 'POST',
     headers: supabaseHeaders(),
-    body: JSON.stringify({ query_embedding: embedding, match_threshold: 0.5, match_count: 5 })
+    body: JSON.stringify({ query_embedding: embedding, match_threshold: 0.2, match_count: 5 })
   });
   const text = await response.text();
+  console.log('Supabase search response:', text.substring(0, 300));
   try { return JSON.parse(text); } catch { throw new Error(`Supabase search error: ${text}`); }
 }
 
@@ -123,6 +124,8 @@ app.post('/api/chat', async (req, res) => {
     const context = Array.isArray(chunks) && chunks.length > 0
       ? chunks.map((c, i) => `[Section ${i + 1}${c.metadata?.source ? ' — ' + c.metadata.source : ''}]\n${c.content}`).join('\n\n')
       : 'No relevant handbook sections found.';
+
+    console.log(`Question: "${question}" | Chunks found: ${Array.isArray(chunks) ? chunks.length : 0} | Similarities: ${Array.isArray(chunks) ? chunks.map(c => c.similarity?.toFixed(3)).join(', ') : 'none'}`);
 
     const system = `You are an expert assistant for the Santa Clara County Medi-Cal Handbook (DEBS).
 Answer using ONLY the handbook sections below. If the answer isn't there, say so and direct to: https://stgenssa.sccgov.org/debs/program_handbooks/medi-cal/index.htm
