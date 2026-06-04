@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Versions — Medi-Cal Chat</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --navy: #0d1f3c; --navy-light: #1e3d6e; --gold: #c9a84c; --gold-light: #e2c97e;
+    --cream: #f7f3eb; --cream-dark: #ede8dc; --text: #1a1a2e; --muted: #6b7a8d;
+    --white: #ffffff; --success: #2e7d5e; --error: #c0392b;
+    --success-bg: #edf7f2; --error-bg: #fdf0ee;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'DM Sans', sans-serif; background: var(--cream); color: var(--text); min-height: 100vh; }
+
+  .login-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--navy); }
+  .login-box { background: rgba(255,255,255,0.04); border: 1px solid rgba(201,168,76,0.2); border-radius: 20px; padding: 2.5rem; width: 100%; max-width: 380px; text-align: center; }
+  .login-badge { width: 56px; height: 56px; background: var(--gold); border-radius: 14px; display: flex; align-items: center; justify-content: center; font-family: 'DM Serif Display', serif; font-size: 22px; color: var(--navy); margin: 0 auto 1.2rem; }
+  .login-box h1 { font-family: 'DM Serif Display', serif; font-size: 1.4rem; color: var(--white); margin-bottom: 0.3rem; }
+  .login-box p { font-size: 0.82rem; color: rgba(255,255,255,0.45); margin-bottom: 1.5rem; font-family: 'DM Mono', monospace; }
+  .login-input { width: 100%; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); border-radius: 10px; padding: 12px 16px; font-size: 0.9rem; color: var(--white); font-family: 'DM Mono', monospace; outline: none; margin-bottom: 1rem; }
+  .login-input:focus { border-color: var(--gold); }
+  .login-btn { width: 100%; background: var(--gold); color: var(--navy); border: none; border-radius: 10px; padding: 12px; font-size: 0.9rem; font-weight: 600; cursor: pointer; }
+  .login-error { margin-top: 0.8rem; font-size: 0.8rem; color: #f08080; font-family: 'DM Mono', monospace; }
+
+  .app { display: none; }
+
+  header { background: var(--navy); padding: 0 2rem; display: flex; align-items: center; justify-content: space-between; height: 64px; border-bottom: 2px solid var(--gold); }
+  .header-left { display: flex; align-items: center; gap: 14px; }
+  .logo-badge { width: 36px; height: 36px; background: var(--gold); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-family: 'DM Serif Display', serif; font-size: 16px; color: var(--navy); }
+  .header-title { font-family: 'DM Serif Display', serif; font-size: 1rem; color: var(--white); }
+  .header-sub { font-size: 0.65rem; color: var(--gold-light); font-family: 'DM Mono', monospace; text-transform: uppercase; }
+  .nav-links { display: flex; gap: 8px; }
+  .nav-link { font-family: 'DM Mono', monospace; font-size: 0.7rem; color: rgba(255,255,255,0.5); text-decoration: none; border: 1px solid rgba(255,255,255,0.1); padding: 5px 12px; border-radius: 20px; transition: all 0.2s; cursor: pointer; background: none; }
+  .nav-link:hover { color: var(--gold); border-color: rgba(201,168,76,0.3); }
+
+  .main { max-width: 800px; margin: 0 auto; padding: 2rem 1.5rem; }
+
+  .page-header { margin-bottom: 2rem; }
+  .page-header h1 { font-family: 'DM Serif Display', serif; font-size: 1.6rem; color: var(--navy); margin-bottom: 0.4rem; }
+  .page-header p { font-size: 0.85rem; color: var(--muted); }
+
+  .save-card { background: var(--navy); border-radius: 14px; padding: 1.5rem; margin-bottom: 2rem; }
+  .save-card h2 { font-family: 'DM Serif Display', serif; font-size: 1.1rem; color: var(--white); margin-bottom: 1rem; }
+  .save-row { display: flex; gap: 0.8rem; }
+  .save-input { flex: 1; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); border-radius: 8px; padding: 10px 14px; font-size: 0.88rem; color: var(--white); font-family: 'DM Sans', sans-serif; outline: none; }
+  .save-input:focus { border-color: var(--gold); }
+  .save-input::placeholder { color: rgba(255,255,255,0.3); }
+  .save-desc { margin-top: 0.8rem; width: 100%; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); border-radius: 8px; padding: 10px 14px; font-size: 0.85rem; color: var(--white); font-family: 'DM Sans', sans-serif; outline: none; resize: none; height: 60px; }
+  .save-desc:focus { border-color: var(--gold); }
+  .save-desc::placeholder { color: rgba(255,255,255,0.3); }
+  .save-btn { background: var(--gold); color: var(--navy); border: none; border-radius: 8px; padding: 10px 20px; font-size: 0.88rem; font-weight: 600; cursor: pointer; white-space: nowrap; font-family: 'DM Sans', sans-serif; }
+  .save-btn:hover { background: var(--gold-light); }
+
+  .save-status { margin-top: 0.8rem; padding: 10px 14px; border-radius: 8px; font-size: 0.82rem; font-family: 'DM Mono', monospace; display: none; }
+  .save-status.success { background: rgba(46,125,94,0.2); color: #7dd3b0; display: block; }
+  .save-status.error { background: rgba(192,57,43,0.2); color: #f08080; display: block; }
+  .save-status.loading { background: rgba(59,91,219,0.2); color: #a5b4fc; display: block; }
+
+  .versions-list { display: flex; flex-direction: column; gap: 1rem; }
+
+  .version-card { background: var(--white); border: 1px solid var(--cream-dark); border-radius: 12px; padding: 1.2rem 1.5rem; display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; box-shadow: 0 1px 4px rgba(0,0,0,0.04); }
+  .version-card:hover { border-color: var(--gold-light); }
+
+  .version-info { flex: 1; }
+  .version-name { font-weight: 600; font-size: 0.95rem; color: var(--navy); margin-bottom: 4px; }
+  .version-desc { font-size: 0.82rem; color: var(--muted); margin-bottom: 8px; }
+  .version-meta { display: flex; gap: 1rem; }
+  .version-stat { font-family: 'DM Mono', monospace; font-size: 0.72rem; color: var(--muted); }
+  .version-stat strong { color: var(--navy); }
+
+  .version-actions { display: flex; gap: 6px; flex-shrink: 0; }
+  .vbtn { font-size: 0.75rem; padding: 6px 12px; border-radius: 7px; cursor: pointer; border: 1px solid; font-family: 'DM Mono', monospace; white-space: nowrap; }
+  .vbtn-restore { background: #edf7f2; color: var(--success); border-color: #b2dfcc; }
+  .vbtn-restore:hover { background: #d4eddf; }
+  .vbtn-delete { background: var(--error-bg); color: var(--error); border-color: #f5c6c0; }
+  .vbtn-delete:hover { background: #f9ddd9; }
+
+  .empty-state { text-align: center; padding: 3rem; color: var(--muted); font-family: 'DM Mono', monospace; background: var(--white); border: 1px solid var(--cream-dark); border-radius: 12px; }
+  .empty-icon { font-size: 2rem; margin-bottom: 0.8rem; }
+
+  .status { padding: 10px 14px; border-radius: 8px; font-size: 0.82rem; font-family: 'DM Mono', monospace; margin-top: 1rem; display: none; }
+  .status.success { background: var(--success-bg); color: var(--success); display: block; }
+  .status.error { background: var(--error-bg); color: var(--error); display: block; }
+  .status.loading { background: #f0f4ff; color: #3b5bdb; display: block; }
+
+  .warning-banner { background: #fff8e8; border: 1px solid var(--gold-light); border-radius: 10px; padding: 12px 16px; font-size: 0.82rem; color: #7a5c1e; margin-bottom: 1.5rem; }
+</style>
+</head>
+<body>
+
+<div class="login-screen" id="login-screen">
+  <div class="login-box">
+    <div class="login-badge">V</div>
+    <h1>Version Control</h1>
+    <p>SNAPSHOT MANAGER</p>
+    <input type="password" class="login-input" id="login-key" placeholder="Enter admin password" onkeydown="if(event.key==='Enter') login()" />
+    <button class="login-btn" onclick="login()">Sign In</button>
+    <div class="login-error" id="login-error"></div>
+  </div>
+</div>
+
+<div class="app" id="app">
+  <header>
+    <div class="header-left">
+      <div class="logo-badge">V</div>
+      <div>
+        <div class="header-title">Version Control</div>
+        <div class="header-sub">Snapshot Manager</div>
+      </div>
+    </div>
+    <div class="nav-links">
+      <a href="/admin" class="nav-link">+ Add Content</a>
+      <a href="/data" class="nav-link">Data Manager</a>
+      <a href="/" class="nav-link">← Chat</a>
+      <button class="nav-link" onclick="logout()">Sign Out</button>
+    </div>
+  </header>
+
+  <div class="main">
+    <div class="page-header">
+      <h1>Knowledge Base Versions</h1>
+      <p>Save snapshots of your knowledge base at any point. Restore any version with one click.</p>
+    </div>
+
+    <div class="save-card">
+      <h2>💾 Save Current Snapshot</h2>
+      <div class="save-row">
+        <input type="text" class="save-input" id="snap-name" placeholder="Snapshot name e.g. Initial Load June 2026" />
+        <button class="save-btn" onclick="saveSnapshot()">Save Snapshot</button>
+      </div>
+      <textarea class="save-desc" id="snap-desc" placeholder="Optional description — what changed, why you saved this version..."></textarea>
+      <div class="save-status" id="save-status"></div>
+    </div>
+
+    <div class="warning-banner">
+      ⚠️ <strong>Restoring a snapshot</strong> will replace ALL current knowledge base content. The current state will be lost unless you save it as a snapshot first.
+    </div>
+
+    <div class="versions-list" id="versions-list">
+      <div class="empty-state">
+        <div class="empty-icon">📦</div>
+        Loading snapshots...
+      </div>
+    </div>
+
+    <div class="status" id="page-status"></div>
+  </div>
+</div>
+
+<script>
+let adminKey = '';
+
+function login() {
+  const key = document.getElementById('login-key').value.trim();
+  if (!key) return;
+  fetch('/api/admin/snapshot-list', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ adminKey: key })
+  }).then(r => r.json()).then(data => {
+    if (data.error === 'Unauthorized') {
+      document.getElementById('login-error').textContent = 'Incorrect password';
+    } else {
+      adminKey = key;
+      document.getElementById('login-screen').style.display = 'none';
+      document.getElementById('app').style.display = 'block';
+      renderSnapshots(data.snapshots || []);
+    }
+  }).catch(() => document.getElementById('login-error').textContent = 'Connection error');
+}
+
+function logout() {
+  adminKey = '';
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
+}
+
+async function loadSnapshots() {
+  try {
+    const res = await fetch('/api/admin/snapshot-list', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminKey })
+    });
+    const data = await res.json();
+    renderSnapshots(data.snapshots || []);
+  } catch (err) {
+    setStatus('page-status', 'error', `❌ ${err.message}`);
+  }
+}
+
+function renderSnapshots(snapshots) {
+  const list = document.getElementById('versions-list');
+  if (snapshots.length === 0) {
+    list.innerHTML = `<div class="empty-state"><div class="empty-icon">📦</div>No snapshots yet — save your first one above!</div>`;
+    return;
+  }
+
+  list.innerHTML = snapshots.map(s => {
+    const date = new Date(s.created_at).toLocaleString();
+    return `
+      <div class="version-card">
+        <div class="version-info">
+          <div class="version-name">${s.name}</div>
+          ${s.description ? `<div class="version-desc">${s.description}</div>` : ''}
+          <div class="version-meta">
+            <span class="version-stat"><strong>${(s.chunk_count || 0).toLocaleString()}</strong> chunks</span>
+            <span class="version-stat">Saved ${date}</span>
+          </div>
+        </div>
+        <div class="version-actions">
+          <button class="vbtn vbtn-restore" onclick="restoreSnapshot(${s.id}, '${s.name.replace(/'/g, "\\'")}')">↺ Restore</button>
+          <button class="vbtn vbtn-delete" onclick="deleteSnapshot(${s.id}, '${s.name.replace(/'/g, "\\'")}')">Delete</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function saveSnapshot() {
+  const name = document.getElementById('snap-name').value.trim();
+  const description = document.getElementById('snap-desc').value.trim();
+  if (!name) return alert('Please enter a snapshot name');
+
+  setSaveStatus('loading', '⏳ Saving snapshot...');
+  try {
+    const res = await fetch('/api/admin/snapshot-save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminKey, name, description })
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    setSaveStatus('success', `✅ Saved "${name}" — ${data.chunks} chunks, ${data.sources} sources`);
+    document.getElementById('snap-name').value = '';
+    document.getElementById('snap-desc').value = '';
+    loadSnapshots();
+  } catch (err) {
+    setSaveStatus('error', `❌ ${err.message}`);
+  }
+}
+
+async function restoreSnapshot(id, name) {
+  if (!confirm(`Restore "${name}"?\n\nThis will REPLACE all current knowledge base content. Save a snapshot first if you want to keep your current state.`)) return;
+
+  setStatus('page-status', 'loading', `⏳ Restoring "${name}"... this may take several minutes`);
+  try {
+    const res = await fetch('/api/admin/snapshot-restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminKey, id })
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    setStatus('page-status', 'success', `✅ Restored "${name}" — ${data.restored} chunks, ${data.sources} sources`);
+  } catch (err) {
+    setStatus('page-status', 'error', `❌ ${err.message}`);
+  }
+}
+
+async function deleteSnapshot(id, name) {
+  if (!confirm(`Delete snapshot "${name}"? This cannot be undone.`)) return;
+  try {
+    const res = await fetch('/api/admin/snapshot-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminKey, id })
+    });
+    const data = await res.json();
+    if (data.success) {
+      setStatus('page-status', 'success', `✅ Deleted snapshot "${name}"`);
+      loadSnapshots();
+    }
+  } catch (err) {
+    setStatus('page-status', 'error', `❌ ${err.message}`);
+  }
+}
+
+function setSaveStatus(type, msg) {
+  const el = document.getElementById('save-status');
+  el.className = `save-status ${type}`;
+  el.textContent = msg;
+}
+
+function setStatus(id, type, msg) {
+  const el = document.getElementById(id);
+  el.className = `status ${type}`;
+  el.textContent = msg;
+}
+</script>
+</body>
+</html>
