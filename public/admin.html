@@ -466,6 +466,8 @@
       </div>
       <label>Page Name</label>
       <input type="text" id="url-name" placeholder="e.g. MAGI MC Eligibility" />
+      <label>Handbook</label>
+      <input type="text" id="url-handbook" placeholder="e.g. Medi-Cal, CalFresh, General Relief" />
       <label>URL</label>
       <input type="url" id="url-input" placeholder="https://stgenssa.sccgov.org/..." />
       <button class="btn" id="url-btn" onclick="ingestUrl()">Fetch & Add to Knowledge Base</button>
@@ -484,6 +486,8 @@
       </div>
       <label>Source Name</label>
       <input type="text" id="text-name" placeholder="e.g. Income Limits 2026" />
+      <label>Handbook</label>
+      <input type="text" id="text-handbook" placeholder="e.g. Medi-Cal, CalFresh, General Relief" />
       <label>Content</label>
       <textarea id="text-input" placeholder="Paste your handbook text here..."></textarea>
       <button class="btn" id="text-btn" onclick="ingestText()">Add to Knowledge Base</button>
@@ -501,6 +505,8 @@
       </div>
       <label>Document Name</label>
       <input type="text" id="pdf-name" placeholder="e.g. Medi-Cal Policy Manual 2026" />
+      <label>Handbook</label>
+      <input type="text" id="pdf-handbook" placeholder="e.g. Medi-Cal, CalFresh, General Relief" />
       <label>PDF File</label>
       <div class="file-drop" id="file-drop" onclick="document.getElementById('pdf-input').click()" ondragover="dragOver(event)" ondragleave="dragLeave(event)" ondrop="dropFile(event)">
         <div class="file-drop-text">
@@ -588,6 +594,7 @@ function setStatus(id, type, message) {
 async function ingestUrl() {
   const url = document.getElementById('url-input').value.trim();
   const name = document.getElementById('url-name').value.trim();
+  const handbook = document.getElementById('url-handbook').value.trim();
   if (!url) return setStatus('url-status', 'error', 'Please enter a URL');
   if (!name) return setStatus('url-status', 'error', 'Please enter a name for this source');
 
@@ -598,7 +605,7 @@ async function ingestUrl() {
     const res = await fetch('/api/admin/ingest-url', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ adminKey, url, name })
+      body: JSON.stringify({ adminKey, url, name, handbook })
     });
     const data = await res.json();
 
@@ -608,6 +615,7 @@ async function ingestUrl() {
       setStatus('url-status', 'success', `✅ Added "${name}" — ${data.chunks} chunks stored`);
       document.getElementById('url-input').value = '';
       document.getElementById('url-name').value = '';
+      document.getElementById('url-handbook').value = '';
       loadKnowledgeBase();
     }
   } catch (err) {
@@ -621,6 +629,7 @@ async function ingestUrl() {
 async function ingestText() {
   const text = document.getElementById('text-input').value.trim();
   const name = document.getElementById('text-name').value.trim();
+  const handbook = document.getElementById('text-handbook').value.trim();
   if (!text) return setStatus('text-status', 'error', 'Please paste some text');
   if (!name) return setStatus('text-status', 'error', 'Please enter a source name');
 
@@ -631,7 +640,7 @@ async function ingestText() {
     const res = await fetch('/api/admin/ingest-text', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ adminKey, text, name })
+      body: JSON.stringify({ adminKey, text, name, handbook })
     });
     const data = await res.json();
 
@@ -641,6 +650,7 @@ async function ingestText() {
       setStatus('text-status', 'success', `✅ Added "${name}" — ${data.chunks} chunks stored`);
       document.getElementById('text-input').value = '';
       document.getElementById('text-name').value = '';
+      document.getElementById('text-handbook').value = '';
       loadKnowledgeBase();
     }
   } catch (err) {
@@ -670,6 +680,7 @@ function dropFile(e) {
 async function ingestPdf() {
   if (!selectedPdfFile) return setStatus('pdf-status', 'error', 'Please select a PDF file');
   const name = document.getElementById('pdf-name').value.trim() || selectedPdfFile.name;
+  const handbook = document.getElementById('pdf-handbook').value.trim();
 
   document.getElementById('pdf-btn').disabled = true;
   setStatus('pdf-status', 'loading', '⏳ Uploading and processing PDF... this may take a few minutes');
@@ -678,6 +689,7 @@ async function ingestPdf() {
     const formData = new FormData();
     formData.append('adminKey', adminKey);
     formData.append('name', name);
+    formData.append('handbook', handbook);
     formData.append('pdf', selectedPdfFile);
 
     const res = await fetch('/api/admin/ingest-pdf', { method: 'POST', body: formData });
