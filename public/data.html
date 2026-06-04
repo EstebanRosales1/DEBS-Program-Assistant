@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data Manager — Medi-Cal Chat</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --navy: #0d1f3c; --navy-light: #1e3d6e; --gold: #c9a84c; --gold-light: #e2c97e;
+    --cream: #f7f3eb; --cream-dark: #ede8dc; --text: #1a1a2e; --muted: #6b7a8d;
+    --white: #ffffff; --success: #2e7d5e; --error: #c0392b;
+    --success-bg: #edf7f2; --error-bg: #fdf0ee;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'DM Sans', sans-serif; background: var(--cream); color: var(--text); min-height: 100vh; }
+
+  .login-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--navy); }
+  .login-box { background: rgba(255,255,255,0.04); border: 1px solid rgba(201,168,76,0.2); border-radius: 20px; padding: 2.5rem; width: 100%; max-width: 380px; text-align: center; }
+  .login-badge { width: 56px; height: 56px; background: var(--gold); border-radius: 14px; display: flex; align-items: center; justify-content: center; font-family: 'DM Serif Display', serif; font-size: 22px; color: var(--navy); margin: 0 auto 1.2rem; }
+  .login-box h1 { font-family: 'DM Serif Display', serif; font-size: 1.4rem; color: var(--white); margin-bottom: 0.3rem; }
+  .login-box p { font-size: 0.82rem; color: rgba(255,255,255,0.45); margin-bottom: 1.5rem; font-family: 'DM Mono', monospace; }
+  .login-input { width: 100%; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); border-radius: 10px; padding: 12px 16px; font-size: 0.9rem; color: var(--white); font-family: 'DM Mono', monospace; outline: none; margin-bottom: 1rem; }
+  .login-input:focus { border-color: var(--gold); }
+  .login-btn { width: 100%; background: var(--gold); color: var(--navy); border: none; border-radius: 10px; padding: 12px; font-size: 0.9rem; font-weight: 600; cursor: pointer; }
+  .login-error { margin-top: 0.8rem; font-size: 0.8rem; color: #f08080; font-family: 'DM Mono', monospace; }
+
+  .app { display: none; }
+
+  header { background: var(--navy); padding: 0 2rem; display: flex; align-items: center; justify-content: space-between; height: 64px; border-bottom: 2px solid var(--gold); }
+  .header-left { display: flex; align-items: center; gap: 14px; }
+  .logo-badge { width: 36px; height: 36px; background: var(--gold); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-family: 'DM Serif Display', serif; font-size: 16px; color: var(--navy); }
+  .header-title { font-family: 'DM Serif Display', serif; font-size: 1rem; color: var(--white); }
+  .header-sub { font-size: 0.65rem; color: var(--gold-light); font-family: 'DM Mono', monospace; text-transform: uppercase; }
+  .nav-links { display: flex; gap: 8px; }
+  .nav-link { font-family: 'DM Mono', monospace; font-size: 0.7rem; color: rgba(255,255,255,0.5); text-decoration: none; border: 1px solid rgba(255,255,255,0.1); padding: 5px 12px; border-radius: 20px; transition: all 0.2s; }
+  .nav-link:hover, .nav-link.active { color: var(--gold); border-color: rgba(201,168,76,0.3); }
+
+  .main { max-width: 1100px; margin: 0 auto; padding: 2rem 1.5rem; }
+
+  .toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem; }
+  .toolbar-left { display: flex; align-items: center; gap: 1rem; }
+  .toolbar h1 { font-family: 'DM Serif Display', serif; font-size: 1.4rem; color: var(--navy); }
+  .toolbar-stats { font-family: 'DM Mono', monospace; font-size: 0.75rem; color: var(--muted); }
+
+  .btn { background: var(--navy); color: var(--gold); border: none; border-radius: 8px; padding: 8px 16px; font-size: 0.82rem; font-family: 'DM Sans', sans-serif; cursor: pointer; transition: background 0.2s; }
+  .btn:hover { background: var(--navy-light); }
+  .btn-outline { background: none; color: var(--navy); border: 1.5px solid var(--cream-dark); }
+  .btn-outline:hover { border-color: var(--gold); background: rgba(201,168,76,0.05); }
+  .btn-danger { background: var(--error-bg); color: var(--error); border: 1px solid #f5c6c0; }
+  .btn-danger:hover { background: #f9ddd9; }
+  .btn-success { background: var(--success-bg); color: var(--success); border: 1px solid #b2dfcc; }
+
+  .filters { display: flex; gap: 0.8rem; margin-bottom: 1.2rem; flex-wrap: wrap; }
+  .filter-input { border: 1.5px solid var(--cream-dark); border-radius: 8px; padding: 8px 12px; font-size: 0.85rem; font-family: 'DM Sans', sans-serif; background: var(--white); outline: none; transition: border-color 0.2s; }
+  .filter-input:focus { border-color: var(--gold); }
+
+  .table-wrap { background: var(--white); border: 1px solid var(--cream-dark); border-radius: 14px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+  table { width: 100%; border-collapse: collapse; }
+  th { background: var(--navy); color: rgba(255,255,255,0.7); font-family: 'DM Mono', monospace; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; padding: 12px 16px; text-align: left; font-weight: 400; }
+  td { padding: 12px 16px; border-bottom: 1px solid var(--cream-dark); font-size: 0.85rem; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(247,243,235,0.5); }
+  .td-name { font-weight: 500; max-width: 200px; }
+  .td-handbook { font-family: 'DM Mono', monospace; font-size: 0.72rem; color: var(--muted); }
+  .td-type { font-family: 'DM Mono', monospace; font-size: 0.72rem; }
+  .td-preview { max-width: 300px; color: var(--muted); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .td-date { font-family: 'DM Mono', monospace; font-size: 0.72rem; color: var(--muted); white-space: nowrap; }
+  .td-actions { display: flex; gap: 6px; white-space: nowrap; }
+  .action-btn { font-size: 0.72rem; padding: 4px 10px; border-radius: 6px; cursor: pointer; border: 1px solid; font-family: 'DM Mono', monospace; }
+  .action-view { background: #f0f4ff; color: #3b5bdb; border-color: #c5d0fc; }
+  .action-edit { background: #fff8e8; color: #7a5c1e; border-color: var(--gold-light); }
+  .action-delete { background: var(--error-bg); color: var(--error); border-color: #f5c6c0; }
+
+  .type-url { color: #3b5bdb; }
+  .type-text { color: var(--success); }
+  .type-pdf { color: #e67e22; }
+
+  .empty-state { text-align: center; padding: 3rem; color: var(--muted); font-family: 'DM Mono', monospace; font-size: 0.85rem; }
+
+  /* Modal */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 100; display: none; align-items: center; justify-content: center; padding: 1rem; }
+  .modal-overlay.open { display: flex; }
+  .modal { background: var(--white); border-radius: 16px; width: 100%; max-width: 700px; max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; }
+  .modal-header { background: var(--navy); padding: 1.2rem 1.5rem; display: flex; align-items: center; justify-content: space-between; }
+  .modal-title { font-family: 'DM Serif Display', serif; font-size: 1.1rem; color: var(--white); }
+  .modal-close { background: none; border: none; color: rgba(255,255,255,0.5); font-size: 1.2rem; cursor: pointer; padding: 4px 8px; }
+  .modal-close:hover { color: var(--white); }
+  .modal-body { padding: 1.5rem; overflow-y: auto; flex: 1; }
+  .modal-footer { padding: 1rem 1.5rem; border-top: 1px solid var(--cream-dark); display: flex; justify-content: flex-end; gap: 0.8rem; }
+
+  label { display: block; font-size: 0.75rem; font-weight: 500; color: var(--muted); margin-bottom: 5px; font-family: 'DM Mono', monospace; text-transform: uppercase; letter-spacing: 0.05em; }
+  input[type="text"], select, textarea { width: 100%; border: 1.5px solid var(--cream-dark); border-radius: 8px; padding: 9px 12px; font-size: 0.88rem; font-family: 'DM Sans', sans-serif; color: var(--text); background: var(--cream); outline: none; margin-bottom: 1rem; transition: border-color 0.2s; }
+  input[type="text"]:focus, select:focus, textarea:focus { border-color: var(--gold); background: var(--white); }
+  textarea { min-height: 300px; resize: vertical; font-family: 'DM Mono', monospace; font-size: 0.8rem; line-height: 1.6; }
+
+  .status { padding: 10px 14px; border-radius: 8px; font-size: 0.82rem; font-family: 'DM Mono', monospace; margin-top: 0.8rem; display: none; }
+  .status.success { background: var(--success-bg); color: var(--success); display: block; }
+  .status.error { background: var(--error-bg); color: var(--error); display: block; }
+  .status.loading { background: #f0f4ff; color: #3b5bdb; display: block; }
+
+  .word-count { font-family: 'DM Mono', monospace; font-size: 0.72rem; color: var(--muted); text-align: right; margin-top: -0.8rem; margin-bottom: 0.8rem; }
+</style>
+</head>
+<body>
+
+<div class="login-screen" id="login-screen">
+  <div class="login-box">
+    <div class="login-badge">DB</div>
+    <h1>Data Manager</h1>
+    <p>RAW SOURCE ARCHIVE</p>
+    <input type="password" class="login-input" id="login-key" placeholder="Enter admin password" onkeydown="if(event.key==='Enter') login()" />
+    <button class="login-btn" onclick="login()">Sign In</button>
+    <div class="login-error" id="login-error"></div>
+  </div>
+</div>
+
+<div class="app" id="app">
+  <header>
+    <div class="header-left">
+      <div class="logo-badge">DB</div>
+      <div>
+        <div class="header-title">Data Manager</div>
+        <div class="header-sub">Raw Source Archive</div>
+      </div>
+    </div>
+    <div class="nav-links">
+      <a href="/admin" class="nav-link">+ Add Content</a>
+      <a href="/versions" class="nav-link">Versions</a>
+      <a href="/" class="nav-link">← Chat</a>
+      <button class="nav-link" onclick="logout()" style="background:none;border:1px solid rgba(255,255,255,0.1);cursor:pointer;">Sign Out</button>
+    </div>
+  </header>
+
+  <div class="main">
+    <div class="toolbar">
+      <div class="toolbar-left">
+        <h1>All Sources</h1>
+        <span class="toolbar-stats" id="stats">Loading...</span>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-outline" onclick="exportData()">⬇ Export JSON</button>
+        <button class="btn" onclick="loadData()">↺ Refresh</button>
+      </div>
+    </div>
+
+    <div class="filters">
+      <input type="text" class="filter-input" id="filter-search" placeholder="Search by name or content..." oninput="filterData()" style="flex:1;min-width:200px;" />
+      <select class="filter-input" id="filter-handbook" onchange="filterData()">
+        <option value="">All Handbooks</option>
+      </select>
+      <select class="filter-input" id="filter-type" onchange="filterData()">
+        <option value="">All Types</option>
+        <option value="url">URL</option>
+        <option value="text">Text</option>
+        <option value="pdf">PDF</option>
+      </select>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Source Name</th>
+            <th>Handbook</th>
+            <th>Type</th>
+            <th>Preview</th>
+            <th>Words</th>
+            <th>Added</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="table-body">
+          <tr><td colspan="7" class="empty-state">Loading sources...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="status" id="page-status"></div>
+  </div>
+</div>
+
+<!-- View/Edit Modal -->
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-title">View Source</div>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <label>Source Name</label>
+      <input type="text" id="edit-name" />
+      <label>Handbook</label>
+      <input type="text" id="edit-handbook" placeholder="e.g. Medi-Cal, CalFresh, General Relief" />
+      <label>Full Text Content</label>
+      <textarea id="edit-text" oninput="updateWordCount()"></textarea>
+      <div class="word-count" id="word-count"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-success" id="save-btn" onclick="saveEdit()">Save & Re-ingest</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let adminKey = '';
+let allSources = [];
+let editingId = null;
+let editingOldName = null;
+
+function login() {
+  const key = document.getElementById('login-key').value.trim();
+  if (!key) return;
+  fetch('/api/admin/raw-sources', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ adminKey: key })
+  }).then(r => r.json()).then(data => {
+    if (data.error === 'Unauthorized') {
+      document.getElementById('login-error').textContent = 'Incorrect password';
+    } else {
+      adminKey = key;
+      document.getElementById('login-screen').style.display = 'none';
+      document.getElementById('app').style.display = 'block';
+      loadData();
+    }
+  }).catch(() => document.getElementById('login-error').textContent = 'Connection error');
+}
+
+function logout() {
+  adminKey = '';
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
+}
+
+async function loadData() {
+  try {
+    const res = await fetch('/api/admin/raw-sources', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminKey })
+    });
+    const data = await res.json();
+    allSources = data.sources || [];
+
+    document.getElementById('stats').textContent = `${allSources.length} sources`;
+
+    // Populate handbook filter
+    const handbooks = [...new Set(allSources.map(s => s.handbook).filter(Boolean))];
+    const hbSelect = document.getElementById('filter-handbook');
+    hbSelect.innerHTML = '<option value="">All Handbooks</option>' +
+      handbooks.map(h => `<option value="${h}">${h}</option>`).join('');
+
+    renderTable(allSources);
+  } catch (err) {
+    setStatus('page-status', 'error', `❌ ${err.message}`);
+  }
+}
+
+function filterData() {
+  const search = document.getElementById('filter-search').value.toLowerCase();
+  const handbook = document.getElementById('filter-handbook').value;
+  const type = document.getElementById('filter-type').value;
+
+  const filtered = allSources.filter(s => {
+    const matchSearch = !search || s.name.toLowerCase().includes(search) || s.raw_text?.toLowerCase().includes(search);
+    const matchHandbook = !handbook || s.handbook === handbook;
+    const matchType = !type || s.source_type === type;
+    return matchSearch && matchHandbook && matchType;
+  });
+
+  renderTable(filtered);
+}
+
+function renderTable(sources) {
+  const tbody = document.getElementById('table-body');
+  if (sources.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No sources found</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = sources.map(s => {
+    const preview = (s.raw_text || '').substring(0, 120).replace(/</g, '&lt;');
+    const words = s.metadata?.word_count || Math.round((s.raw_text || '').split(' ').length);
+    const date = new Date(s.fetched_at).toLocaleDateString();
+    const typeClass = `type-${s.source_type}`;
+    return `
+      <tr>
+        <td class="td-name">${s.name}</td>
+        <td class="td-handbook">${s.handbook || '—'}</td>
+        <td class="td-type"><span class="${typeClass}">${s.source_type.toUpperCase()}</span></td>
+        <td class="td-preview" title="${preview}">${preview}...</td>
+        <td class="td-date">${words.toLocaleString()}</td>
+        <td class="td-date">${date}</td>
+        <td class="td-actions">
+          <button class="action-btn action-view" onclick="viewSource(${s.id})">View</button>
+          <button class="action-btn action-edit" onclick="editSource(${s.id})">Edit</button>
+          <button class="action-btn action-delete" onclick="deleteSource(${s.id}, '${s.name.replace(/'/g, "\\'")}')">Delete</button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+async function viewSource(id) {
+  const src = allSources.find(s => s.id === id);
+  if (!src) return;
+  editingId = id;
+  editingOldName = src.name;
+  document.getElementById('modal-title').textContent = 'View Source';
+  document.getElementById('edit-name').value = src.name;
+  document.getElementById('edit-name').readOnly = true;
+  document.getElementById('edit-handbook').value = src.handbook || '';
+  document.getElementById('edit-handbook').readOnly = true;
+  document.getElementById('edit-text').value = src.raw_text || '';
+  document.getElementById('edit-text').readOnly = true;
+  document.getElementById('save-btn').style.display = 'none';
+  updateWordCount();
+  document.getElementById('modal').classList.add('open');
+}
+
+async function editSource(id) {
+  const src = allSources.find(s => s.id === id);
+  if (!src) return;
+  editingId = id;
+  editingOldName = src.name;
+  document.getElementById('modal-title').textContent = 'Edit Source';
+  document.getElementById('edit-name').value = src.name;
+  document.getElementById('edit-name').readOnly = false;
+  document.getElementById('edit-handbook').value = src.handbook || '';
+  document.getElementById('edit-handbook').readOnly = false;
+  document.getElementById('edit-text').value = src.raw_text || '';
+  document.getElementById('edit-text').readOnly = false;
+  document.getElementById('save-btn').style.display = 'block';
+  updateWordCount();
+  document.getElementById('modal').classList.add('open');
+}
+
+async function saveEdit() {
+  const name = document.getElementById('edit-name').value.trim();
+  const handbook = document.getElementById('edit-handbook').value.trim();
+  const rawText = document.getElementById('edit-text').value.trim();
+  if (!name || !rawText) return alert('Name and content are required');
+
+  document.getElementById('save-btn').textContent = 'Saving...';
+  document.getElementById('save-btn').disabled = true;
+
+  try {
+    const res = await fetch('/api/admin/update-source', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminKey, id: editingId, name, rawText, handbook })
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    closeModal();
+    setStatus('page-status', 'success', `✅ Updated "${name}" — ${data.chunks} chunks re-ingested`);
+    loadData();
+  } catch (err) {
+    setStatus('page-status', 'error', `❌ ${err.message}`);
+  }
+
+  document.getElementById('save-btn').textContent = 'Save & Re-ingest';
+  document.getElementById('save-btn').disabled = false;
+}
+
+async function deleteSource(id, name) {
+  if (!confirm(`Delete "${name}" from archive and knowledge base?`)) return;
+  try {
+    const res = await fetch('/api/admin/delete-source', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminKey, source: name, rawId: id })
+    });
+    const data = await res.json();
+    if (data.success) {
+      setStatus('page-status', 'success', `✅ Deleted "${name}"`);
+      loadData();
+    }
+  } catch (err) {
+    setStatus('page-status', 'error', `❌ ${err.message}`);
+  }
+}
+
+async function exportData() {
+  try {
+    const res = await fetch('/api/admin/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminKey })
+    });
+    const data = await res.json();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `medi-cal-knowledge-base-${new Date().toISOString().split('T')[0]}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    setStatus('page-status', 'error', `❌ ${err.message}`);
+  }
+}
+
+function closeModal() { document.getElementById('modal').classList.remove('open'); editingId = null; }
+function updateWordCount() {
+  const text = document.getElementById('edit-text').value;
+  const words = text.split(/\s+/).filter(w => w.length > 0).length;
+  document.getElementById('word-count').textContent = `${words.toLocaleString()} words`;
+}
+function setStatus(id, type, msg) {
+  const el = document.getElementById(id);
+  el.className = `status ${type}`;
+  el.textContent = msg;
+}
+</script>
+</body>
+</html>
