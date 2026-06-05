@@ -520,6 +520,69 @@
       <div class="status" id="pdf-status"></div>
     </div>
 
+    <!-- Bulk PDF Upload -->
+    <div class="card full-width">
+      <div class="card-header">
+        <div class="card-icon icon-pdf">📦</div>
+        <div>
+          <div class="card-title">Bulk PDF Upload</div>
+          <div class="card-desc">Upload an entire folder of PDFs at once</div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+        <div>
+          <label>Handbook</label>
+          <input type="text" id="bulk-handbook" placeholder="e.g. Medi-Cal" value="Medi-Cal" />
+        </div>
+        <div>
+          <label>Category (folder name)</label>
+          <input type="text" id="bulk-category" placeholder="e.g. Telephonic Signatures" />
+        </div>
+      </div>
+
+      <label>Select All PDFs in This Folder</label>
+      <div class="file-drop" id="bulk-drop" onclick="document.getElementById('bulk-input').click()" ondragover="dragOver(event)" ondragleave="dragLeave(event)" ondrop="bulkDrop(event)">
+        <div class="file-drop-text">
+          <strong>Click to select multiple PDFs or drag & drop</strong>
+          Select all files in one folder — Ctrl+A to select all
+        </div>
+      </div>
+      <input type="file" id="bulk-input" accept=".pdf" multiple onchange="bulkFilesSelected(this)" />
+
+      <!-- Queue -->
+      <div id="bulk-queue" style="display:none;margin-bottom:1rem;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
+          <label style="margin:0;">File Queue</label>
+          <span id="bulk-queue-count" style="font-family:'DM Mono',monospace;font-size:0.75rem;color:var(--muted);"></span>
+        </div>
+        <div id="bulk-queue-list" style="max-height:200px;overflow-y:auto;border:1px solid var(--cream-dark);border-radius:8px;background:var(--cream);"></div>
+      </div>
+
+      <!-- Progress -->
+      <div id="bulk-progress-wrap" style="display:none;margin-bottom:1rem;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+          <span id="bulk-progress-label" style="font-family:'DM Mono',monospace;font-size:0.78rem;color:var(--navy);"></span>
+          <span id="bulk-progress-pct" style="font-family:'DM Mono',monospace;font-size:0.78rem;color:var(--muted);"></span>
+        </div>
+        <div style="height:6px;background:var(--cream-dark);border-radius:3px;overflow:hidden;">
+          <div id="bulk-progress-bar" style="height:100%;background:var(--gold);border-radius:3px;width:0%;transition:width 0.3s;"></div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:0.8rem;">
+        <button class="btn" id="bulk-btn" onclick="startBulkUpload()" style="flex:1;" disabled>Upload All PDFs</button>
+        <button class="btn btn-outline" onclick="clearBulkQueue()" style="width:auto;padding:0 16px;">Clear</button>
+      </div>
+
+      <div id="bulk-results" style="margin-top:1rem;display:none;">
+        <div id="bulk-results-summary" style="font-family:'DM Mono',monospace;font-size:0.82rem;margin-bottom:0.5rem;"></div>
+        <div id="bulk-results-list" style="max-height:150px;overflow-y:auto;font-family:'DM Mono',monospace;font-size:0.75rem;"></div>
+      </div>
+
+      <div class="status" id="bulk-status"></div>
+    </div>
+
     <!-- Knowledge Base -->
     <div class="card">
       <div class="card-header" style="justify-content:space-between">
@@ -762,6 +825,113 @@ async function deleteSource(source) {
   } catch (err) {
     setStatus('kb-status', 'error', `❌ ${err.message}`);
   }
+}
+
+// ── Bulk PDF Upload ────────────────────────────────────────────
+let bulkFiles = [];
+
+function bulkFilesSelected(input) {
+  bulkFiles = Array.from(input.files);
+  renderBulkQueue();
+}
+
+function bulkDrop(e) {
+  e.preventDefault();
+  document.getElementById('bulk-drop').classList.remove('dragover');
+  bulkFiles = Array.from(e.dataTransfer.files).filter(f => f.name.endsWith('.pdf'));
+  renderBulkQueue();
+}
+
+function renderBulkQueue() {
+  if (bulkFiles.length === 0) return;
+  document.getElementById('bulk-queue').style.display = 'block';
+  document.getElementById('bulk-queue-count').textContent = `${bulkFiles.length} files selected`;
+  document.getElementById('bulk-btn').disabled = false;
+
+  document.getElementById('bulk-queue-list').innerHTML = bulkFiles.map((f, i) => `
+    <div style="padding:8px 12px;border-bottom:1px solid var(--cream-dark);display:flex;justify-content:space-between;align-items:center;">
+      <span style="font-size:0.8rem;color:var(--text);">${cleanFileName(f.name)}</span>
+      <span style="font-size:0.72rem;color:var(--muted);">${(f.size / 1024).toFixed(0)} KB</span>
+    </div>
+  `).join('');
+}
+
+function clearBulkQueue() {
+  bulkFiles = [];
+  document.getElementById('bulk-queue').style.display = 'none';
+  document.getElementById('bulk-progress-wrap').style.display = 'none';
+  document.getElementById('bulk-results').style.display = 'none';
+  document.getElementById('bulk-btn').disabled = true;
+  document.getElementById('bulk-input').value = '';
+  document.getElementById('bulk-category').value = '';
+}
+
+function cleanFileName(filename) {
+  return filename.replace('.pdf', '').replace(/_/g, ' ').replace(/-/g, ' ').trim();
+}
+
+async function startBulkUpload() {
+  const handbook = document.getElementById('bulk-handbook').value.trim() || 'Medi-Cal';
+  const category = document.getElementById('bulk-category').value.trim();
+
+  if (bulkFiles.length === 0) return setStatus('bulk-status', 'error', 'Please select PDF files first');
+  if (!category) return setStatus('bulk-status', 'error', 'Please enter the category (folder name)');
+
+  document.getElementById('bulk-btn').disabled = true;
+  document.getElementById('bulk-progress-wrap').style.display = 'block';
+  document.getElementById('bulk-results').style.display = 'none';
+
+  const results = [];
+  let succeeded = 0;
+  let failed = 0;
+
+  for (let i = 0; i < bulkFiles.length; i++) {
+    const file = bulkFiles[i];
+    const name = `${category} — ${cleanFileName(file.name)}`;
+    const pct = Math.round(((i) / bulkFiles.length) * 100);
+
+    document.getElementById('bulk-progress-label').textContent = `Processing ${i + 1} of ${bulkFiles.length} — ${cleanFileName(file.name)}`;
+    document.getElementById('bulk-progress-pct').textContent = `${pct}%`;
+    document.getElementById('bulk-progress-bar').style.width = `${pct}%`;
+
+    try {
+      const formData = new FormData();
+      formData.append('adminKey', adminKey);
+      formData.append('name', name);
+      formData.append('handbook', handbook);
+      formData.append('pdf', file);
+
+      const res = await fetch('/api/admin/ingest-pdf', { method: 'POST', body: formData });
+      const data = await res.json();
+
+      if (data.error) throw new Error(data.error);
+      results.push({ name, success: true, chunks: data.chunks });
+      succeeded++;
+    } catch (err) {
+      results.push({ name, success: false, error: err.message });
+      failed++;
+    }
+  }
+
+  // Final progress
+  document.getElementById('bulk-progress-label').textContent = `Complete!`;
+  document.getElementById('bulk-progress-pct').textContent = '100%';
+  document.getElementById('bulk-progress-bar').style.width = '100%';
+
+  // Show results
+  document.getElementById('bulk-results').style.display = 'block';
+  document.getElementById('bulk-results-summary').innerHTML =
+    `<span style="color:var(--success);">✅ ${succeeded} succeeded</span>` +
+    (failed > 0 ? `  <span style="color:var(--error);">  ❌ ${failed} failed</span>` : '');
+
+  document.getElementById('bulk-results-list').innerHTML = results.map(r =>
+    r.success
+      ? `<div style="padding:4px 8px;color:var(--success);">✓ ${r.name} — ${r.chunks} chunks</div>`
+      : `<div style="padding:4px 8px;color:var(--error);">✗ ${r.name} — ${r.error}</div>`
+  ).join('');
+
+  document.getElementById('bulk-btn').disabled = false;
+  loadKnowledgeBase();
 }
 </script>
 </body>
