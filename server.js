@@ -246,6 +246,77 @@ app.post('/api/admin/ingest-bulk', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
+// ADMIN — BULK LOAD FROM OPTIMIZED JSON
+// ══════════════════════════════════════════════════════════════════════════════
+
+app.post('/api/admin/bulk-load', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  const { chunks, sources, clearFirst = false } = req.body;
+  if (!chunks || !Array.isArray(chunks)) return res.status(400).json({ error: 'chunks array required' });
+
+  // Respond immediately so connection doesn't timeout
+  res.json({ success: true, message: 'Bulk load started', total_chunks: chunks.length, total_sources: sources?.length || 0 });
+
+  // Process in background
+  (async () => {
+    try {
+      console.log(`Bulk load started: ${chunks.length} chunks, clearFirst=${clearFirst}`);
+
+      if (clearFirst) {
+        await fetch(supabaseUrl('documents?id=gt.0'), { method: 'DELETE', headers: supabaseHeaders() });
+        await fetch(supabaseUrl('raw_sources?id=gt.0'), { method: 'DELETE', headers: supabaseHeaders() });
+        console.log('Cleared existing data');
+      }
+
+      // Save raw sources
+      if (sources?.length > 0) {
+        for (const src of sources) {
+          try {
+            await supabaseInsert('raw_sources', {
+              name: src.name, source_type: src.source_type || 'pdf',
+              handbook: src.handbook || 'Medi-Cal',
+              raw_text: src.raw_text || '', metadata: src.metadata || {}
+            }, 'return=minimal');
+            await sleep(50);
+          } catch (err) { console.error(`Raw source error (${src.name}): ${err.message}`); }
+        }
+        console.log(`Saved ${sources.length} raw sources`);
+      }
+
+      // Embed and store chunks
+      let stored = 0, errors = 0;
+      for (let i = 0; i < chunks.length; i++) {
+        try {
+          const embedding = await getEmbedding(chunks[i].content);
+          await supabaseInsert('documents', { content: chunks[i].content, metadata: chunks[i].metadata, embedding }, 'return=minimal');
+          stored++;
+          if (stored % 50 === 0) console.log(`Progress: ${stored}/${chunks.length} chunks embedded`);
+          await sleep(150);
+        } catch (err) {
+          errors++;
+          console.error(`Chunk ${i} error: ${err.message}`);
+          await sleep(1000);
+        }
+      }
+      console.log(`Bulk load complete: ${stored} stored, ${errors} errors`);
+    } catch (err) { console.error('Bulk load failed:', err.message); }
+  })();
+});
+
+// Check how many chunks are currently in DB
+app.post('/api/admin/bulk-progress', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  try {
+    const countRes = await fetch(supabaseUrl('documents?select=count'), {
+      headers: supabaseHeaders({ 'Prefer': 'count=exact', 'Range': '0-0' })
+    });
+    const countHeader = countRes.headers.get('content-range');
+    const total = countHeader ? parseInt(countHeader.split('/')[1]) : 0;
+    res.json({ chunks_in_db: total });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
 // ADMIN — DATA MANAGEMENT
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -465,6 +536,7 @@ app.get('/api/health', (req, res) => {
 app.get('/admin', (req, res) => res.sendFile('admin.html', { root: 'public' }));
 app.get('/data', (req, res) => res.sendFile('data.html', { root: 'public' }));
 app.get('/versions', (req, res) => res.sendFile('versions.html', { root: 'public' }));
+app.get('/loader', (req, res) => res.sendFile('loader.html', { root: 'public' }));
 app.get('*', (req, res) => res.sendFile('index.html', { root: 'public' }));
 
 const PORT = process.env.PORT || 3000;
