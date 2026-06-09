@@ -96,10 +96,12 @@ async function getEmbedding(text, inputType = 'document') {
 
 // ─── Core ingestion ────────────────────────────────────────────────────────
 
-async function saveRawSource(name, sourceType, rawText, handbook, sourceUrl = null) {
+async function saveRawSource(name, sourceType, rawText, handbook, sourceUrl = null, sessionId = null, sessionName = null) {
   const result = await supabaseInsert('raw_sources', {
     name, source_type: sourceType, source_url: sourceUrl,
     raw_text: rawText, handbook,
+    session_id: sessionId,
+    session_name: sessionName,
     metadata: { char_count: rawText.length, word_count: rawText.split(' ').length }
   });
   return result[0].id;
@@ -127,10 +129,8 @@ async function ingestChunks(chunks) {
   return stored;
 }
 
-async function processAndIngest(rawText, name, handbook, sourceType, sourceUrl = null) {
-  // 1. Save raw source
-  const rawId = await saveRawSource(name, sourceType, rawText, handbook, sourceUrl);
-  // 2. Chunk and embed
+async function processAndIngest(rawText, name, handbook, sourceType, sourceUrl = null, sessionId = null, sessionName = null) {
+  const rawId = await saveRawSource(name, sourceType, rawText, handbook, sourceUrl, sessionId, sessionName);
   const chunks = chunkText(rawText, name, handbook);
   const stored = await ingestChunks(chunks);
   return { rawId, chunks: stored };
@@ -201,22 +201,32 @@ ${context}
 
 app.post('/api/admin/ingest-url', async (req, res) => {
   if (!authCheck(req, res)) return;
-  const { url, name, handbook = '' } = req.body;
+  const { url, name, handbook = '', archiveOnly = false, sessionId = null, sessionName = null } = req.body;
   try {
     const response = await fetch(url);
     const html = await response.text();
     const rawText = stripHtml(html);
-    const result = await processAndIngest(rawText, name || url, handbook, 'url', url);
-    res.json({ success: true, ...result, source: name || url });
+    if (archiveOnly) {
+      const rawId = await saveRawSource(name || url, 'url', rawText, handbook, url, sessionId, sessionName);
+      res.json({ success: true, rawId, chunks: 0, archived: true, source: name || url });
+    } else {
+      const result = await processAndIngest(rawText, name || url, handbook, 'url', url, sessionId, sessionName);
+      res.json({ success: true, ...result, source: name || url });
+    }
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.post('/api/admin/ingest-text', async (req, res) => {
   if (!authCheck(req, res)) return;
-  const { text, name, handbook = '' } = req.body;
+  const { text, name, handbook = '', archiveOnly = false, sessionId = null, sessionName = null } = req.body;
   try {
-    const result = await processAndIngest(text, name || 'Manual Text', handbook, 'text');
-    res.json({ success: true, ...result, source: name });
+    if (archiveOnly) {
+      const rawId = await saveRawSource(name || 'Manual Text', 'text', text, handbook, null, sessionId, sessionName);
+      res.json({ success: true, rawId, chunks: 0, archived: true, source: name });
+    } else {
+      const result = await processAndIngest(text, name || 'Manual Text', handbook, 'text', null, sessionId, sessionName);
+      res.json({ success: true, ...result, source: name });
+    }
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -225,10 +235,18 @@ app.post('/api/admin/ingest-pdf', upload.single('pdf'), async (req, res) => {
   try {
     const pdfParse = require('pdf-parse');
     const data = await pdfParse(req.file.buffer);
-    const name = req.body.name || req.file.originalname;
+    const name = req.body.name || req.file.originalname.replace('.pdf', '');
     const handbook = req.body.handbook || '';
-    const result = await processAndIngest(data.text, name, handbook, 'pdf');
-    res.json({ success: true, ...result, source: name });
+    const archiveOnly = req.body.archiveOnly === 'true';
+    const sessionId = req.body.sessionId || null;
+    const sessionName = req.body.sessionName || null;
+    if (archiveOnly) {
+      const rawId = await saveRawSource(name, 'pdf', data.text, handbook, null, sessionId, sessionName);
+      res.json({ success: true, rawId, chunks: 0, archived: true, source: name });
+    } else {
+      const result = await processAndIngest(data.text, name, handbook, 'pdf', null, sessionId, sessionName);
+      res.json({ success: true, ...result, source: name });
+    }
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -443,6 +461,42 @@ app.post('/api/admin/export', async (req, res) => {
     });
     const data = await response.json();
     res.json({ export: data, total: data.length, exported_at: new Date().toISOString() });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Export by session ID only
+app.post('/api/admin/export-session', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  const { sessionId } = req.body;
+  if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
+  try {
+    const response = await fetch(
+      supabaseUrl(`raw_sources?session_id=eq.${encodeURIComponent(sessionId)}&select=*&order=name.asc`),
+      { headers: supabaseHeaders() }
+    );
+    const data = await response.json();
+    res.json({ export: data, total: data.length, sessionId, exported_at: new Date().toISOString() });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// List all sessions
+app.post('/api/admin/sessions', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  try {
+    const response = await fetch(
+      supabaseUrl('raw_sources?select=session_id,session_name,handbook,fetched_at&order=fetched_at.desc'),
+      { headers: supabaseHeaders() }
+    );
+    const data = await response.json();
+    // Group by session
+    const sessions = {};
+    data.forEach(item => {
+      const sid = item.session_id || 'no-session';
+      const sname = item.session_name || 'No Session';
+      if (!sessions[sid]) sessions[sid] = { sessionId: sid, sessionName: sname, handbook: item.handbook, count: 0, createdAt: item.fetched_at };
+      sessions[sid].count++;
+    });
+    res.json({ sessions: Object.values(sessions).sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt)) });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
