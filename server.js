@@ -108,12 +108,21 @@ async function saveRawSource(name, sourceType, rawText, handbook, sourceUrl = nu
 async function ingestChunks(chunks) {
   let stored = 0;
   for (const chunk of chunks) {
-    const embedding = await getEmbedding(chunk.content);
-    await supabaseInsert('documents', {
-      content: chunk.content, metadata: chunk.metadata, embedding
-    }, 'return=minimal');
-    stored++;
-    await sleep(200);
+    let success = false;
+    let attempts = 0;
+    while (!success && attempts < 3) {
+      try {
+        attempts++;
+        const embedding = await getEmbedding(chunk.content);
+        await supabaseInsert('documents', { content: chunk.content, metadata: chunk.metadata, embedding }, 'return=minimal');
+        stored++;
+        success = true;
+        await sleep(400);
+      } catch (err) {
+        if (attempts < 3) await sleep(attempts * 2000);
+        else throw err;
+      }
+    }
   }
   return stored;
 }
@@ -283,22 +292,36 @@ app.post('/api/admin/bulk-load', async (req, res) => {
         console.log(`Saved ${sources.length} raw sources`);
       }
 
-      // Embed and store chunks
+      // Embed and store chunks with retry logic
       let stored = 0, errors = 0;
       for (let i = 0; i < chunks.length; i++) {
-        try {
-          const embedding = await getEmbedding(chunks[i].content);
-          await supabaseInsert('documents', { content: chunks[i].content, metadata: chunks[i].metadata, embedding }, 'return=minimal');
-          stored++;
-          if (stored % 50 === 0) console.log(`Progress: ${stored}/${chunks.length} chunks embedded`);
-          await sleep(150);
-        } catch (err) {
-          errors++;
-          console.error(`Chunk ${i} error: ${err.message}`);
-          await sleep(1000);
+        let success = false;
+        let attempts = 0;
+        const maxAttempts = 3;
+
+        while (!success && attempts < maxAttempts) {
+          try {
+            attempts++;
+            const embedding = await getEmbedding(chunks[i].content);
+            await supabaseInsert('documents', { content: chunks[i].content, metadata: chunks[i].metadata, embedding }, 'return=minimal');
+            stored++;
+            success = true;
+            if (stored % 25 === 0) console.log(`Progress: ${stored}/${chunks.length} chunks embedded`);
+            await sleep(400); // 400ms between chunks = ~2.5 RPM well under 300 RPM limit
+          } catch (err) {
+            console.error(`Chunk ${i} attempt ${attempts} error: ${err.message}`);
+            if (attempts < maxAttempts) {
+              const waitMs = attempts * 3000; // 3s, 6s between retries
+              console.log(`Retrying chunk ${i} in ${waitMs/1000}s...`);
+              await sleep(waitMs);
+            } else {
+              errors++;
+              console.error(`Chunk ${i} failed after ${maxAttempts} attempts — skipping`);
+            }
+          }
         }
       }
-      console.log(`Bulk load complete: ${stored} stored, ${errors} errors`);
+      console.log(`Bulk load complete: ${stored} stored, ${errors} errors out of ${chunks.length} chunks`);
     } catch (err) { console.error('Bulk load failed:', err.message); }
   })();
 });
