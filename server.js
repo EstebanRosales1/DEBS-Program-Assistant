@@ -278,25 +278,25 @@ app.post('/api/admin/ingest-bulk', async (req, res) => {
 
 app.post('/api/admin/bulk-load', async (req, res) => {
   if (!authCheck(req, res)) return;
-  const { chunks, sources, clearFirst = false } = req.body;
+  const { chunks, sources, clearFirst = false, chunksOnly = false } = req.body;
   if (!chunks || !Array.isArray(chunks)) return res.status(400).json({ error: 'chunks array required' });
 
   // Respond immediately so connection doesn't timeout
-  res.json({ success: true, message: 'Bulk load started', total_chunks: chunks.length, total_sources: sources?.length || 0 });
+  res.json({ success: true, message: 'Bulk load started', total_chunks: chunks.length, total_sources: sources?.length || 0, chunksOnly });
 
   // Process in background
   (async () => {
     try {
-      console.log(`Bulk load started: ${chunks.length} chunks, clearFirst=${clearFirst}`);
+      console.log(`Bulk load started: ${chunks.length} chunks, clearFirst=${clearFirst}, chunksOnly=${chunksOnly}`);
 
       if (clearFirst) {
         await fetch(supabaseUrl('documents?id=gt.0'), { method: 'DELETE', headers: supabaseHeaders() });
-        await fetch(supabaseUrl('raw_sources?id=gt.0'), { method: 'DELETE', headers: supabaseHeaders() });
+        if (!chunksOnly) await fetch(supabaseUrl('raw_sources?id=gt.0'), { method: 'DELETE', headers: supabaseHeaders() });
         console.log('Cleared existing data');
       }
 
-      // Save raw sources
-      if (sources?.length > 0) {
+      // Save raw sources only if NOT in chunksOnly mode
+      if (!chunksOnly && sources?.length > 0) {
         for (const src of sources) {
           try {
             await supabaseInsert('raw_sources', {
@@ -308,6 +308,8 @@ app.post('/api/admin/bulk-load', async (req, res) => {
           } catch (err) { console.error(`Raw source error (${src.name}): ${err.message}`); }
         }
         console.log(`Saved ${sources.length} raw sources`);
+      } else if (chunksOnly) {
+        console.log('Chunks only mode — skipping raw sources save');
       }
 
       // Embed and store chunks with retry logic
@@ -325,11 +327,11 @@ app.post('/api/admin/bulk-load', async (req, res) => {
             stored++;
             success = true;
             if (stored % 25 === 0) console.log(`Progress: ${stored}/${chunks.length} chunks embedded`);
-            await sleep(400); // 400ms between chunks = ~2.5 RPM well under 300 RPM limit
+            await sleep(400);
           } catch (err) {
             console.error(`Chunk ${i} attempt ${attempts} error: ${err.message}`);
             if (attempts < maxAttempts) {
-              const waitMs = attempts * 3000; // 3s, 6s between retries
+              const waitMs = attempts * 3000;
               console.log(`Retrying chunk ${i} in ${waitMs/1000}s...`);
               await sleep(waitMs);
             } else {
@@ -365,16 +367,39 @@ app.post('/api/admin/bulk-progress', async (req, res) => {
 app.post('/api/admin/list', async (req, res) => {
   if (!authCheck(req, res)) return;
   try {
-    const response = await fetch(supabaseUrl('documents?select=id,metadata&order=id.asc'), {
-      headers: supabaseHeaders()
+    // Get total count first
+    const countRes = await fetch(supabaseUrl('documents?select=count'), {
+      headers: supabaseHeaders({ 'Prefer': 'count=exact', 'Range': '0-0' })
     });
-    const docs = await response.json();
+    const countHeader = countRes.headers.get('content-range');
+    const total = countHeader ? parseInt(countHeader.split('/')[1]) : 0;
+
+    // Fetch all docs in batches of 1000
+    let allDocs = [];
+    let offset = 0;
+    const batchSize = 1000;
+    while (offset < total) {
+      const batchRes = await fetch(
+        supabaseUrl(`documents?select=id,metadata&order=id.asc&limit=${batchSize}&offset=${offset}`),
+        { headers: supabaseHeaders({ 'Range': `${offset}-${offset + batchSize - 1}` }) }
+      );
+      const batch = await batchRes.json();
+      if (!Array.isArray(batch) || batch.length === 0) break;
+      allDocs = allDocs.concat(batch);
+      offset += batchSize;
+    }
+
+    // Group by handbook then source
+    const byHandbook = {};
     const sources = {};
-    docs.forEach(d => {
+    allDocs.forEach(d => {
       const src = d.metadata?.source || 'Unknown';
+      const hb = d.metadata?.handbook || 'Unknown';
       sources[src] = (sources[src] || 0) + 1;
+      byHandbook[hb] = (byHandbook[hb] || 0) + 1;
     });
-    res.json({ total: docs.length, sources });
+
+    res.json({ total: allDocs.length, sources, byHandbook });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
