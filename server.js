@@ -533,10 +533,11 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', supabase: !!SUPABASE_URL, anthropic: !!ANTHROPIC_API_KEY, voyage: !!VOYAGE_API_KEY });
 });
 
-app.get('/admin', (req, res) => res.sendFile('admin.html', { root: 'public' }));
-app.get('/data', (req, res) => res.sendFile('data.html', { root: 'public' }));
-app.get('/versions', (req, res) => res.sendFile('versions.html', { root: 'public' }));
-app.get('/loader', (req, res) => res.sendFile('loader.html', { root: 'public' }));
+app.get('/admin', (req, res) => res.sendFile('dashboard.html', { root: 'public' }));
+app.get('/dashboard', (req, res) => res.sendFile('dashboard.html', { root: 'public' }));
+app.get('/data', (req, res) => res.sendFile('dashboard.html', { root: 'public' }));
+app.get('/versions', (req, res) => res.sendFile('dashboard.html', { root: 'public' }));
+app.get('/loader', (req, res) => res.sendFile('dashboard.html', { root: 'public' }));
 app.get('*', (req, res) => res.sendFile('index.html', { root: 'public' }));
 
 const PORT = process.env.PORT || 3000;
