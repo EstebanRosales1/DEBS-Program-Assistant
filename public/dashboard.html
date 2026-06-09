@@ -273,14 +273,38 @@ tr:hover td{background:rgba(247,243,235,.5);}
         <div class="card full">
           <div class="card-header">
             <div class="card-icon icon-pdf">📄</div>
-            <div><div class="card-title">Upload PDF</div><div class="card-desc">Upload a single PDF document</div></div>
+            <div><div class="card-title">Upload PDF</div><div class="card-desc">Upload a single PDF — or use Archive Only mode to save without embedding (export + optimize first)</div></div>
           </div>
+
+          <!-- Session Manager -->
+          <div style="background:var(--navy);border-radius:10px;padding:1rem;margin-bottom:1rem;">
+            <div style="font-family:'DM Mono',monospace;font-size:.72rem;color:var(--gold-light);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.6rem;">Upload Session</div>
+            <div style="display:flex;gap:.8rem;align-items:flex-end;flex-wrap:wrap;">
+              <div style="flex:1;min-width:180px;">
+                <div style="font-size:.72rem;color:rgba(255,255,255,.5);font-family:'DM Mono',monospace;margin-bottom:4px;">SESSION NAME</div>
+                <input type="text" id="session-name" placeholder="e.g. MEDS Upload June 2026" style="background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);color:var(--white);margin-bottom:0;" />
+              </div>
+              <div style="flex:1;min-width:140px;">
+                <div style="font-size:.72rem;color:rgba(255,255,255,.5);font-family:'DM Mono',monospace;margin-bottom:4px;">HANDBOOK</div>
+                <input type="text" id="pdf-handbook" placeholder="e.g. MEDS" style="background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);color:var(--white);margin-bottom:0;" />
+              </div>
+              <button class="save-btn" onclick="startSession()" id="session-start-btn">Start Session</button>
+              <button class="save-btn" onclick="endSession()" id="session-end-btn" style="display:none;background:#c0392b;color:white;">End Session</button>
+            </div>
+            <div id="session-status" style="margin-top:.6rem;font-family:'DM Mono',monospace;font-size:.75rem;color:rgba(255,255,255,.5);">No active session — start one to tag uploads</div>
+          </div>
+
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
             <div>
               <label>Document Name</label>
-              <input type="text" id="pdf-name" placeholder="e.g. E-Signatures Policy"/>
-              <label>Handbook</label>
-              <input type="text" id="pdf-handbook" placeholder="e.g. Medi-Cal"/>
+              <input type="text" id="pdf-name" placeholder="e.g. MEDS Aid Code Lookup"/>
+              <label class="checkbox-label" style="margin-top:.2rem;">
+                <input type="checkbox" id="archive-only" onchange="toggleArchiveMode()"/>
+                Archive Only — save raw text, skip embedding
+              </label>
+              <div id="archive-note" style="display:none;font-size:.75rem;color:#7a5c1e;font-family:'DM Mono',monospace;background:#fff8e8;padding:8px 10px;border-radius:6px;margin-top:.4rem;">
+                ⚠️ File will be saved to archive only. Export session JSON and optimize before loading to knowledge base.
+              </div>
             </div>
             <div>
               <label>PDF File</label>
@@ -372,7 +396,8 @@ tr:hover td{background:rgba(247,243,235,.5);}
           <span class="stat-badge" id="data-stats">Loading...</span>
         </div>
         <div style="display:flex;gap:8px">
-          <button class="btn btn-sm btn-outline" onclick="exportData()">⬇ Export JSON</button>
+          <button class="btn btn-sm btn-outline" onclick="exportSession()">⬇ Export Session</button>
+          <button class="btn btn-sm btn-outline" onclick="exportData()">⬇ Export All</button>
           <button class="btn btn-sm" onclick="loadDataManager()">↺ Refresh</button>
         </div>
       </div>
@@ -449,6 +474,8 @@ let loaderTarget = 0;
 let loaderStartTime = null;
 let loaderInterval = null;
 let selectedPdfFile = null;
+let activeSessionId = null;
+let activeSessionName = null;
 
 // ══════════════════════════════════════════════════════
 // AUTH
@@ -544,6 +571,44 @@ async function ingestText() {
 }
 
 // ══════════════════════════════════════════════════════
+// SESSION MANAGEMENT
+// ══════════════════════════════════════════════════════
+function startSession() {
+  const name = document.getElementById('session-name').value.trim();
+  const handbook = document.getElementById('pdf-handbook').value.trim();
+  if (!name) return alert('Please enter a session name');
+  if (!handbook) return alert('Please enter a handbook name');
+  activeSessionId = `session_${Date.now()}`;
+  activeSessionName = name;
+  document.getElementById('session-status').textContent = `✅ Active session: "${name}" (${handbook}) — all uploads tagged to this session`;
+  document.getElementById('session-status').style.color = '#7dd3b0';
+  document.getElementById('session-start-btn').style.display = 'none';
+  document.getElementById('session-end-btn').style.display = 'block';
+  document.getElementById('session-name').readOnly = true;
+  document.getElementById('pdf-handbook').readOnly = true;
+}
+
+function endSession() {
+  activeSessionId = null;
+  activeSessionName = null;
+  document.getElementById('session-status').textContent = 'Session ended — uploads will no longer be tagged';
+  document.getElementById('session-status').style.color = 'rgba(255,255,255,.5)';
+  document.getElementById('session-start-btn').style.display = 'block';
+  document.getElementById('session-end-btn').style.display = 'none';
+  document.getElementById('session-name').readOnly = false;
+  document.getElementById('pdf-handbook').readOnly = false;
+  document.getElementById('session-name').value = '';
+}
+
+function toggleArchiveMode() {
+  const on = document.getElementById('archive-only').checked;
+  document.getElementById('archive-note').style.display = on ? 'block' : 'none';
+  document.getElementById('pdf-btn').textContent = on
+    ? 'Archive PDF — Save Without Embedding'
+    : 'Upload & Add to Knowledge Base';
+}
+
+// ══════════════════════════════════════════════════════
 // ADD CONTENT — PDF
 // ══════════════════════════════════════════════════════
 function pdragOver(e){e.preventDefault();document.getElementById('pdf-drop').classList.add('dragover');}
@@ -553,19 +618,45 @@ function pdfSelected(input){selectedPdfFile=input.files[0];document.getElementBy
 
 async function ingestPdf() {
   if (!selectedPdfFile) return setStatus('pdf-status','error','Please select a PDF');
-  const name=document.getElementById('pdf-name').value.trim()||selectedPdfFile.name;
-  const handbook=document.getElementById('pdf-handbook').value.trim();
-  document.getElementById('pdf-btn').disabled=true;
-  setStatus('pdf-status','loading','⏳ Uploading PDF...');
+  const name = document.getElementById('pdf-name').value.trim() || selectedPdfFile.name.replace('.pdf','');
+  const handbook = document.getElementById('pdf-handbook').value.trim();
+  const archiveOnly = document.getElementById('archive-only').checked;
+
+  if (!handbook) return setStatus('pdf-status','error','Please enter a handbook name');
+
+  document.getElementById('pdf-btn').disabled = true;
+  setStatus('pdf-status','loading', archiveOnly ? '⏳ Archiving PDF...' : '⏳ Uploading PDF...');
+
   try {
-    const fd=new FormData();
-    fd.append('adminKey',adminKey); fd.append('name',name); fd.append('handbook',handbook); fd.append('pdf',selectedPdfFile);
-    const res=await fetch('/api/admin/ingest-pdf',{method:'POST',body:fd});
-    const data=await res.json();
-    if (data.error) setStatus('pdf-status','error','❌ '+data.error);
-    else { setStatus('pdf-status','success',`✅ Added "${name}" — ${data.chunks} chunks`); selectedPdfFile=null; document.getElementById('pdf-selected').textContent=''; }
-  } catch(err){ setStatus('pdf-status','error','❌ '+err.message); }
-  document.getElementById('pdf-btn').disabled=false;
+    const fd = new FormData();
+    fd.append('adminKey', adminKey);
+    fd.append('name', name);
+    fd.append('handbook', handbook);
+    fd.append('archiveOnly', archiveOnly ? 'true' : 'false');
+    if (activeSessionId) {
+      fd.append('sessionId', activeSessionId);
+      fd.append('sessionName', activeSessionName);
+    }
+    fd.append('pdf', selectedPdfFile);
+
+    const res = await fetch('/api/admin/ingest-pdf', {method:'POST', body:fd});
+    const data = await res.json();
+
+    if (data.error) {
+      setStatus('pdf-status','error','❌ '+data.error);
+    } else if (archiveOnly) {
+      setStatus('pdf-status','success',`✅ Archived "${name}" — raw text saved, not yet embedded`);
+      selectedPdfFile = null;
+      document.getElementById('pdf-selected').textContent = '';
+      document.getElementById('pdf-name').value = '';
+    } else {
+      setStatus('pdf-status','success',`✅ Added "${name}" — ${data.chunks} chunks`);
+      selectedPdfFile = null;
+      document.getElementById('pdf-selected').textContent = '';
+      document.getElementById('pdf-name').value = '';
+    }
+  } catch(err) { setStatus('pdf-status','error','❌ '+err.message); }
+  document.getElementById('pdf-btn').disabled = false;
 }
 
 // ══════════════════════════════════════════════════════
@@ -763,10 +854,45 @@ async function exportData(){
   try {
     const res=await fetch('/api/admin/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({adminKey})});
     const data=await res.json();
-    const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
-    const url=URL.createObjectURL(blob);
-    const a=document.createElement('a');a.href=url;a.download=`medi-cal-knowledge-base-${new Date().toISOString().split('T')[0]}.json`;a.click();URL.revokeObjectURL(url);
+    downloadJson(data, `knowledge-base-all-${new Date().toISOString().split('T')[0]}.json`);
   } catch(err){setStatus('dm-status','error','❌ '+err.message);}
+}
+
+async function exportSession(){
+  // Get list of sessions first
+  try {
+    const res = await fetch('/api/admin/sessions', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({adminKey})});
+    const data = await res.json();
+    const sessions = (data.sessions || []).filter(s => s.sessionId !== 'no-session');
+
+    if (sessions.length === 0) {
+      return setStatus('dm-status', 'error', '❌ No sessions found. Upload PDFs with Archive Only mode and a session name first.');
+    }
+
+    // Build session picker
+    const options = sessions.map(s => `${s.sessionName} (${s.handbook} — ${s.count} files)`).join('\n');
+    const choice = prompt(`Select session number to export:\n\n${sessions.map((s,i) => `${i+1}. ${s.sessionName} — ${s.handbook} (${s.count} files)`).join('\n')}\n\nEnter number:`);
+    if (!choice) return;
+    const idx = parseInt(choice) - 1;
+    if (isNaN(idx) || idx < 0 || idx >= sessions.length) return setStatus('dm-status','error','Invalid selection');
+
+    const session = sessions[idx];
+    setStatus('dm-status','loading',`⏳ Exporting session "${session.sessionName}"...`);
+
+    const exportRes = await fetch('/api/admin/export-session', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({adminKey, sessionId: session.sessionId})});
+    const exportData = await exportRes.json();
+
+    downloadJson(exportData, `${session.sessionName.replace(/\s+/g,'-').toLowerCase()}-${new Date().toISOString().split('T')[0]}.json`);
+    setStatus('dm-status','success',`✅ Exported ${exportData.total} sources from "${session.sessionName}"`);
+  } catch(err){setStatus('dm-status','error','❌ '+err.message);}
+}
+
+function downloadJson(data, filename) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
 }
 
 function closeModal(){document.getElementById('modal').classList.remove('open');editingId=null;}
