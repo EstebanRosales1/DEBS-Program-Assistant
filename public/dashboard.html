@@ -1,0 +1,844 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin Dashboard — Medi-Cal Chat</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --navy:#0d1f3c;--navy-mid:#162d52;--navy-light:#1e3d6e;
+  --gold:#c9a84c;--gold-light:#e2c97e;
+  --cream:#f7f3eb;--cream-dark:#ede8dc;
+  --text:#1a1a2e;--muted:#6b7a8d;--white:#ffffff;
+  --success:#2e7d5e;--error:#c0392b;
+  --success-bg:#edf7f2;--error-bg:#fdf0ee;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'DM Sans',sans-serif;background:var(--cream);color:var(--text);min-height:100vh;}
+
+/* ── LOGIN ── */
+.login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--navy);}
+.login-box{background:rgba(255,255,255,0.04);border:1px solid rgba(201,168,76,0.2);border-radius:20px;padding:2.5rem;width:100%;max-width:380px;text-align:center;}
+.login-badge{width:56px;height:56px;background:var(--gold);border-radius:14px;display:flex;align-items:center;justify-content:center;font-family:'DM Serif Display',serif;font-size:22px;color:var(--navy);margin:0 auto 1.2rem;}
+.login-box h1{font-family:'DM Serif Display',serif;font-size:1.4rem;color:var(--white);margin-bottom:.3rem;}
+.login-box p{font-size:.82rem;color:rgba(255,255,255,.45);margin-bottom:1.5rem;font-family:'DM Mono',monospace;}
+.login-input{width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:12px 16px;font-size:.9rem;color:var(--white);font-family:'DM Mono',monospace;outline:none;margin-bottom:1rem;transition:border-color .2s;}
+.login-input:focus{border-color:var(--gold);}
+.login-input::placeholder{color:rgba(255,255,255,.25);}
+.login-btn{width:100%;background:var(--gold);color:var(--navy);border:none;border-radius:10px;padding:12px;font-size:.9rem;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;}
+.login-btn:hover{background:var(--gold-light);}
+.login-error{margin-top:.8rem;font-size:.8rem;color:#f08080;font-family:'DM Mono',monospace;}
+
+/* ── SHELL ── */
+.shell{display:none;flex-direction:column;min-height:100vh;}
+header{background:var(--navy);height:64px;display:flex;align-items:center;justify-content:space-between;padding:0 2rem;border-bottom:2px solid var(--gold);flex-shrink:0;}
+.hdr-left{display:flex;align-items:center;gap:14px;}
+.hdr-badge{width:38px;height:38px;background:var(--gold);border-radius:8px;display:flex;align-items:center;justify-content:center;font-family:'DM Serif Display',serif;font-size:17px;color:var(--navy);}
+.hdr-title{font-family:'DM Serif Display',serif;font-size:1.1rem;color:var(--white);}
+.hdr-sub{font-size:.65rem;color:var(--gold-light);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.05em;}
+.hdr-right{display:flex;align-items:center;gap:10px;}
+.chat-link{font-family:'DM Mono',monospace;font-size:.7rem;color:var(--gold);text-decoration:none;border:1px solid rgba(201,168,76,.3);padding:5px 12px;border-radius:20px;transition:all .2s;}
+.chat-link:hover{background:rgba(201,168,76,.1);}
+.logout-btn{font-family:'DM Mono',monospace;font-size:.7rem;color:rgba(255,255,255,.4);background:none;border:1px solid rgba(255,255,255,.1);padding:5px 12px;border-radius:20px;cursor:pointer;transition:all .2s;}
+.logout-btn:hover{color:rgba(255,255,255,.7);}
+
+/* ── TABS ── */
+.tabs{background:var(--navy-mid);border-bottom:1px solid rgba(255,255,255,.08);display:flex;padding:0 2rem;gap:0;overflow-x:auto;}
+.tab{font-family:'DM Mono',monospace;font-size:.75rem;color:rgba(255,255,255,.4);padding:14px 20px;cursor:pointer;border-bottom:2px solid transparent;transition:all .2s;white-space:nowrap;background:none;border-top:none;border-left:none;border-right:none;letter-spacing:.03em;}
+.tab:hover{color:rgba(255,255,255,.7);}
+.tab.active{color:var(--gold);border-bottom-color:var(--gold);}
+
+/* ── CONTENT ── */
+.content{flex:1;overflow-y:auto;}
+.panel{display:none;max-width:960px;margin:0 auto;padding:2rem 1.5rem;}
+.panel.active{display:block;}
+
+/* ── CARDS ── */
+.card{background:var(--white);border:1px solid var(--cream-dark);border-radius:16px;padding:1.5rem;box-shadow:0 2px 8px rgba(0,0,0,.04);margin-bottom:1.5rem;}
+.card-header{display:flex;align-items:center;gap:10px;margin-bottom:1.2rem;}
+.card-icon{width:34px;height:34px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;}
+.icon-url{background:#e8f0fe;}.icon-text{background:#e8f7f0;}.icon-pdf{background:#fef3e8;}.icon-bulk{background:#f3e8fe;}.icon-db{background:#fff0e8;}
+.card-title{font-family:'DM Serif Display',serif;font-size:1rem;color:var(--navy);}
+.card-desc{font-size:.78rem;color:var(--muted);margin-top:1px;}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;}
+.full{grid-column:1/-1;}
+
+/* ── FORMS ── */
+label{display:block;font-size:.75rem;font-weight:500;color:var(--muted);margin-bottom:5px;font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.05em;}
+input[type=text],input[type=url],input[type=password],select,textarea{width:100%;border:1.5px solid var(--cream-dark);border-radius:10px;padding:10px 14px;font-size:.88rem;font-family:'DM Sans',sans-serif;color:var(--text);background:var(--cream);outline:none;transition:border-color .2s;margin-bottom:.8rem;}
+input[type=text]:focus,input[type=url]:focus,select:focus,textarea:focus{border-color:var(--gold);background:var(--white);}
+textarea{resize:vertical;min-height:100px;}
+
+/* ── BUTTONS ── */
+.btn{width:100%;background:var(--navy);color:var(--gold);border:none;border-radius:10px;padding:11px;font-size:.88rem;font-weight:500;font-family:'DM Sans',sans-serif;cursor:pointer;transition:background .2s,transform .1s;}
+.btn:hover{background:var(--navy-light);}
+.btn:active{transform:scale(.98);}
+.btn:disabled{background:var(--cream-dark);color:var(--muted);cursor:not-allowed;}
+.btn-sm{padding:6px 14px;width:auto;font-size:.78rem;border-radius:8px;}
+.btn-outline{background:none;color:var(--navy);border:1.5px solid var(--cream-dark);}
+.btn-outline:hover{border-color:var(--gold);background:rgba(201,168,76,.05);}
+.btn-danger{background:var(--error-bg);color:var(--error);border:1px solid #f5c6c0;}
+.btn-danger:hover{background:#f9ddd9;}
+.btn-success{background:var(--success-bg);color:var(--success);border:1px solid #b2dfcc;}
+
+/* ── FILE DROP ── */
+.file-drop{border:2px dashed var(--cream-dark);border-radius:10px;padding:1.5rem;text-align:center;cursor:pointer;transition:all .2s;margin-bottom:.8rem;background:var(--cream);}
+.file-drop:hover,.file-drop.dragover{border-color:var(--gold);background:rgba(201,168,76,.05);}
+.file-drop-text{font-size:.82rem;color:var(--muted);font-family:'DM Mono',monospace;}
+.file-drop-text strong{color:var(--navy);display:block;font-size:.9rem;margin-bottom:3px;}
+.file-selected{font-size:.8rem;color:var(--success);font-family:'DM Mono',monospace;margin-top:5px;}
+input[type=file]{display:none;}
+
+/* ── STATUS ── */
+.status{margin-top:.8rem;padding:10px 14px;border-radius:8px;font-size:.82rem;font-family:'DM Mono',monospace;display:none;}
+.status.success{background:var(--success-bg);color:var(--success);display:block;}
+.status.error{background:var(--error-bg);color:var(--error);display:block;}
+.status.loading{background:#f0f4ff;color:#3b5bdb;display:block;}
+
+/* ── PROGRESS ── */
+.progress-bar{width:100%;height:6px;background:var(--cream-dark);border-radius:3px;margin-top:.6rem;overflow:hidden;display:none;}
+.progress-fill{height:100%;background:var(--gold);border-radius:3px;width:0%;transition:width .3s;}
+.progress-big{height:10px;border-radius:5px;margin:1rem 0;}
+
+/* ── DATA TABLE ── */
+.toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:1rem;}
+.toolbar-left{display:flex;align-items:center;gap:1rem;}
+.toolbar h2{font-family:'DM Serif Display',serif;font-size:1.3rem;color:var(--navy);}
+.stat-badge{font-family:'DM Mono',monospace;font-size:.75rem;color:var(--muted);}
+.filters{display:flex;gap:.8rem;margin-bottom:1rem;flex-wrap:wrap;}
+.filter-input{border:1.5px solid var(--cream-dark);border-radius:8px;padding:8px 12px;font-size:.85rem;font-family:'DM Sans',sans-serif;background:var(--white);outline:none;transition:border-color .2s;margin-bottom:0;}
+.filter-input:focus{border-color:var(--gold);}
+.table-wrap{background:var(--white);border:1px solid var(--cream-dark);border-radius:14px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.04);}
+table{width:100%;border-collapse:collapse;}
+th{background:var(--navy);color:rgba(255,255,255,.7);font-family:'DM Mono',monospace;font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;padding:12px 16px;text-align:left;font-weight:400;}
+td{padding:11px 16px;border-bottom:1px solid var(--cream-dark);font-size:.84rem;vertical-align:middle;}
+tr:last-child td{border-bottom:none;}
+tr:hover td{background:rgba(247,243,235,.5);}
+.td-name{font-weight:500;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.td-mono{font-family:'DM Mono',monospace;font-size:.72rem;color:var(--muted);}
+.td-preview{max-width:260px;color:var(--muted);font-size:.79rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.td-actions{display:flex;gap:5px;}
+.abtn{font-size:.72rem;padding:4px 10px;border-radius:6px;cursor:pointer;border:1px solid;font-family:'DM Mono',monospace;}
+.abtn-view{background:#f0f4ff;color:#3b5bdb;border-color:#c5d0fc;}
+.abtn-edit{background:#fff8e8;color:#7a5c1e;border-color:var(--gold-light);}
+.abtn-del{background:var(--error-bg);color:var(--error);border-color:#f5c6c0;}
+.type-url{color:#3b5bdb;}.type-text{color:var(--success);}.type-pdf{color:#e67e22;}
+.empty-state{text-align:center;padding:2.5rem;color:var(--muted);font-family:'DM Mono',monospace;font-size:.85rem;}
+
+/* ── KB STATS ── */
+.kb-stats{display:flex;gap:1rem;margin-bottom:1.2rem;}
+.kb-stat{background:var(--cream);border-radius:10px;padding:10px 16px;flex:1;text-align:center;}
+.kb-stat-num{font-family:'DM Serif Display',serif;font-size:1.6rem;color:var(--navy);}
+.kb-stat-label{font-size:.7rem;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;margin-top:3px;}
+.source-list{display:flex;flex-direction:column;gap:.5rem;}
+.source-row{display:flex;align-items:center;padding:10px 14px;background:var(--cream);border-radius:8px;font-size:.82rem;gap:10px;}
+.source-name{flex:1;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.source-chunks{font-family:'DM Mono',monospace;font-size:.72rem;color:var(--muted);flex-shrink:0;}
+
+/* ── VERSIONS ── */
+.save-card{background:var(--navy);border-radius:14px;padding:1.5rem;margin-bottom:1.5rem;}
+.save-card h3{font-family:'DM Serif Display',serif;font-size:1.1rem;color:var(--white);margin-bottom:1rem;}
+.save-row{display:flex;gap:.8rem;}
+.save-input{flex:1;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:8px;padding:10px 14px;font-size:.88rem;color:var(--white);font-family:'DM Sans',sans-serif;outline:none;margin-bottom:0;}
+.save-input:focus{border-color:var(--gold);}
+.save-input::placeholder{color:rgba(255,255,255,.3);}
+.save-desc{margin-top:.8rem;width:100%;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:8px;padding:10px 14px;font-size:.85rem;color:var(--white);font-family:'DM Sans',sans-serif;outline:none;resize:none;height:60px;margin-bottom:0;}
+.save-desc:focus{border-color:var(--gold);}
+.save-desc::placeholder{color:rgba(255,255,255,.3);}
+.save-btn{background:var(--gold);color:var(--navy);border:none;border-radius:8px;padding:10px 20px;font-size:.88rem;font-weight:600;cursor:pointer;white-space:nowrap;font-family:'DM Sans',sans-serif;}
+.save-status{margin-top:.8rem;padding:10px 14px;border-radius:8px;font-size:.82rem;font-family:'DM Mono',monospace;display:none;}
+.save-status.success{background:rgba(46,125,94,.2);color:#7dd3b0;display:block;}
+.save-status.error{background:rgba(192,57,43,.2);color:#f08080;display:block;}
+.save-status.loading{background:rgba(59,91,219,.2);color:#a5b4fc;display:block;}
+.version-card{background:var(--white);border:1px solid var(--cream-dark);border-radius:12px;padding:1.2rem 1.5rem;display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;margin-bottom:.8rem;}
+.version-name{font-weight:600;font-size:.95rem;color:var(--navy);margin-bottom:4px;}
+.version-desc{font-size:.82rem;color:var(--muted);margin-bottom:8px;}
+.version-meta{display:flex;gap:1rem;}
+.version-stat{font-family:'DM Mono',monospace;font-size:.72rem;color:var(--muted);}
+.version-stat strong{color:var(--navy);}
+.version-actions{display:flex;gap:6px;flex-shrink:0;}
+.vbtn{font-size:.75rem;padding:6px 12px;border-radius:7px;cursor:pointer;border:1px solid;font-family:'DM Mono',monospace;white-space:nowrap;}
+.vbtn-restore{background:#edf7f2;color:var(--success);border-color:#b2dfcc;}
+.vbtn-delete{background:var(--error-bg);color:var(--error);border-color:#f5c6c0;}
+.warn-box{background:#fff8e8;border:1px solid var(--gold-light);border-radius:10px;padding:12px 16px;font-size:.82rem;color:#7a5c1e;margin-bottom:1.2rem;}
+
+/* ── LOADER ── */
+.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:1.5rem;}
+.stat-box{background:var(--cream);border-radius:10px;padding:12px;text-align:center;}
+.stat-num{font-family:'DM Serif Display',serif;font-size:1.5rem;color:var(--navy);}
+.stat-label{font-family:'DM Mono',monospace;font-size:.65rem;color:var(--muted);text-transform:uppercase;margin-top:2px;}
+.prog-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:.8rem;margin-bottom:1rem;}
+.prog-stat{background:var(--cream);border-radius:8px;padding:10px;text-align:center;}
+.prog-stat-num{font-family:'DM Serif Display',serif;font-size:1.3rem;color:var(--navy);}
+.prog-stat-label{font-family:'DM Mono',monospace;font-size:.65rem;color:var(--muted);text-transform:uppercase;}
+.log-box{background:var(--navy);border-radius:10px;padding:1rem;font-family:'DM Mono',monospace;font-size:.75rem;color:rgba(255,255,255,.7);max-height:180px;overflow-y:auto;line-height:1.8;}
+.log-success{color:#7dd3b0;}.log-error{color:#f08080;}.log-info{color:var(--gold-light);}
+.complete-banner{background:var(--success-bg);border:1px solid #b2dfcc;border-radius:10px;padding:1rem 1.2rem;display:none;align-items:center;gap:12px;margin-top:1rem;}
+.complete-banner.show{display:flex;}
+.checkbox-label{display:flex;align-items:center;gap:8px;font-size:.85rem;cursor:pointer;margin-bottom:1rem;}
+.checkbox-label input{width:16px;height:16px;cursor:pointer;accent-color:var(--navy);}
+
+/* ── MODAL ── */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100;display:none;align-items:center;justify-content:center;padding:1rem;}
+.modal-overlay.open{display:flex;}
+.modal{background:var(--white);border-radius:16px;width:100%;max-width:700px;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;}
+.modal-header{background:var(--navy);padding:1.2rem 1.5rem;display:flex;align-items:center;justify-content:space-between;}
+.modal-title{font-family:'DM Serif Display',serif;font-size:1.1rem;color:var(--white);}
+.modal-close{background:none;border:none;color:rgba(255,255,255,.5);font-size:1.2rem;cursor:pointer;padding:4px 8px;}
+.modal-close:hover{color:var(--white);}
+.modal-body{padding:1.5rem;overflow-y:auto;flex:1;}
+.modal-footer{padding:1rem 1.5rem;border-top:1px solid var(--cream-dark);display:flex;justify-content:flex-end;gap:.8rem;}
+.word-count{font-family:'DM Mono',monospace;font-size:.72rem;color:var(--muted);text-align:right;margin-top:-.6rem;margin-bottom:.8rem;}
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div class="login-wrap" id="login-wrap">
+  <div class="login-box">
+    <div class="login-badge">MC</div>
+    <h1>Admin Dashboard</h1>
+    <p>MEDI-CAL HANDBOOK MANAGER</p>
+    <input type="password" class="login-input" id="login-key" placeholder="Enter admin password" onkeydown="if(event.key==='Enter')login()"/>
+    <button class="login-btn" onclick="login()">Sign In</button>
+    <div class="login-error" id="login-error"></div>
+  </div>
+</div>
+
+<!-- SHELL -->
+<div class="shell" id="shell">
+  <header>
+    <div class="hdr-left">
+      <div class="hdr-badge">MC</div>
+      <div>
+        <div class="hdr-title">Admin Dashboard</div>
+        <div class="hdr-sub">Medi-Cal Handbook Manager</div>
+      </div>
+    </div>
+    <div class="hdr-right">
+      <a href="/" class="chat-link">← Back to Chat</a>
+      <button class="logout-btn" onclick="logout()">Sign Out</button>
+    </div>
+  </header>
+
+  <div class="tabs">
+    <button class="tab active" onclick="showTab('add')">➕ Add Content</button>
+    <button class="tab" onclick="showTab('loader')">⚡ Bulk Loader</button>
+    <button class="tab" onclick="showTab('kb')">🗄 Knowledge Base</button>
+    <button class="tab" onclick="showTab('data')">📋 Data Manager</button>
+    <button class="tab" onclick="showTab('versions')">📦 Versions</button>
+  </div>
+
+  <div class="content">
+
+    <!-- ══ TAB: ADD CONTENT ══ -->
+    <div class="panel active" id="panel-add">
+      <div class="grid-2">
+
+        <!-- URL -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-icon icon-url">🔗</div>
+            <div><div class="card-title">Add from URL</div><div class="card-desc">Fetch a handbook page</div></div>
+          </div>
+          <label>Page Name</label>
+          <input type="text" id="url-name" placeholder="e.g. MAGI MC Eligibility"/>
+          <label>Handbook</label>
+          <input type="text" id="url-handbook" placeholder="e.g. Medi-Cal"/>
+          <label>URL</label>
+          <input type="url" id="url-input" placeholder="https://..."/>
+          <button class="btn" id="url-btn" onclick="ingestUrl()">Fetch & Add to Knowledge Base</button>
+          <div class="progress-bar" id="url-pb"><div class="progress-fill"></div></div>
+          <div class="status" id="url-status"></div>
+        </div>
+
+        <!-- TEXT -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-icon icon-text">📝</div>
+            <div><div class="card-title">Add Plain Text</div><div class="card-desc">Paste policy text directly</div></div>
+          </div>
+          <label>Source Name</label>
+          <input type="text" id="text-name" placeholder="e.g. Income Limits 2026"/>
+          <label>Handbook</label>
+          <input type="text" id="text-handbook" placeholder="e.g. Medi-Cal"/>
+          <label>Content</label>
+          <textarea id="text-input" placeholder="Paste handbook text here..."></textarea>
+          <button class="btn" id="text-btn" onclick="ingestText()">Add to Knowledge Base</button>
+          <div class="status" id="text-status"></div>
+        </div>
+
+        <!-- PDF -->
+        <div class="card full">
+          <div class="card-header">
+            <div class="card-icon icon-pdf">📄</div>
+            <div><div class="card-title">Upload PDF</div><div class="card-desc">Upload a single PDF document</div></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+            <div>
+              <label>Document Name</label>
+              <input type="text" id="pdf-name" placeholder="e.g. E-Signatures Policy"/>
+              <label>Handbook</label>
+              <input type="text" id="pdf-handbook" placeholder="e.g. Medi-Cal"/>
+            </div>
+            <div>
+              <label>PDF File</label>
+              <div class="file-drop" id="pdf-drop" onclick="document.getElementById('pdf-input').click()" ondragover="pdragOver(event)" ondragleave="pdragLeave()" ondrop="pdropFile(event)">
+                <div class="file-drop-text"><strong>Click or drag & drop</strong>PDF up to 20MB</div>
+                <div class="file-selected" id="pdf-selected"></div>
+              </div>
+              <input type="file" id="pdf-input" accept=".pdf" onchange="pdfSelected(this)"/>
+            </div>
+          </div>
+          <button class="btn" id="pdf-btn" onclick="ingestPdf()">Upload & Add to Knowledge Base</button>
+          <div class="status" id="pdf-status"></div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ══ TAB: BULK LOADER ══ -->
+    <div class="panel" id="panel-loader">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-icon icon-bulk">⚡</div>
+          <div><div class="card-title">Load Optimized Knowledge Base</div><div class="card-desc">Upload the <code>medi-cal-optimized.json</code> file. 517 sources, 1,021 chunks, pre-cleaned and optimized. Takes ~30-45 minutes in background.</div></div>
+        </div>
+
+        <div class="stats-grid" id="loader-stats" style="display:none">
+          <div class="stat-box"><div class="stat-num" id="ls-sources">—</div><div class="stat-label">Sources</div></div>
+          <div class="stat-box"><div class="stat-num" id="ls-chunks">—</div><div class="stat-label">Chunks</div></div>
+          <div class="stat-box"><div class="stat-num" id="ls-cats">—</div><div class="stat-label">Categories</div></div>
+          <div class="stat-box"><div class="stat-num" id="ls-ver">—</div><div class="stat-label">Version</div></div>
+        </div>
+
+        <div class="file-drop" id="loader-drop" onclick="document.getElementById('loader-input').click()" ondragover="ldragOver(event)" ondragleave="ldragLeave()" ondrop="ldropFile(event)">
+          <div class="file-drop-text"><strong id="loader-drop-title">Click to choose or drag & drop</strong><span id="loader-drop-sub">medi-cal-optimized.json</span></div>
+        </div>
+        <input type="file" id="loader-input" accept=".json" onchange="loaderFileSelected(this)"/>
+
+        <label class="checkbox-label">
+          <input type="checkbox" id="clear-first" onchange="document.getElementById('clear-warn').style.display=this.checked?'block':'none'"/>
+          Clear existing knowledge base before loading
+        </label>
+        <div id="clear-warn" style="display:none;font-size:.78rem;color:var(--error);margin-bottom:.8rem;font-family:'DM Mono',monospace;">⚠️ This will delete all current chunks</div>
+
+        <button class="btn" id="loader-btn" onclick="startLoad()" disabled>Select a file to continue</button>
+        <div class="status" id="loader-status"></div>
+      </div>
+
+      <div class="card" id="progress-card" style="display:none">
+        <div class="card-title" style="margin-bottom:1rem">Loading Progress</div>
+        <div class="prog-stats">
+          <div class="prog-stat"><div class="prog-stat-num" id="prog-current">0</div><div class="prog-stat-label">In Database</div></div>
+          <div class="prog-stat"><div class="prog-stat-num" id="prog-target">0</div><div class="prog-stat-label">Target</div></div>
+          <div class="prog-stat"><div class="prog-stat-num" id="prog-pct">0%</div><div class="prog-stat-label">Complete</div></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:.5rem;font-size:.82rem;">
+          <span id="prog-label" style="color:var(--navy);font-weight:500;">Loading...</span>
+          <span id="prog-eta" style="color:var(--muted);font-family:'DM Mono',monospace;font-size:.78rem;"></span>
+        </div>
+        <div class="progress-bar progress-big" style="display:block"><div class="progress-fill" id="prog-bar"></div></div>
+        <div class="log-box" id="load-log"></div>
+        <div class="complete-banner" id="complete-banner">
+          <span style="font-size:1.5rem">✅</span>
+          <div style="font-size:.88rem;color:var(--success)"><strong style="display:block;font-size:1rem;margin-bottom:2px">Knowledge base loaded!</strong>Go test the chatbot.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ TAB: KNOWLEDGE BASE ══ -->
+    <div class="panel" id="panel-kb">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.2rem">
+          <div style="font-family:'DM Serif Display',serif;font-size:1.1rem;color:var(--navy)">Knowledge Base Overview</div>
+          <button class="btn btn-sm btn-outline" onclick="loadKB()">↺ Refresh</button>
+        </div>
+        <div class="kb-stats">
+          <div class="kb-stat"><div class="kb-stat-num" id="kb-total">—</div><div class="kb-stat-label">Total Chunks</div></div>
+          <div class="kb-stat"><div class="kb-stat-num" id="kb-sources">—</div><div class="kb-stat-label">Sources</div></div>
+        </div>
+        <div class="source-list" id="kb-source-list"><div class="empty-state">Loading...</div></div>
+        <div class="status" id="kb-status"></div>
+      </div>
+    </div>
+
+    <!-- ══ TAB: DATA MANAGER ══ -->
+    <div class="panel" id="panel-data">
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <h2>Raw Source Archive</h2>
+          <span class="stat-badge" id="data-stats">Loading...</span>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-sm btn-outline" onclick="exportData()">⬇ Export JSON</button>
+          <button class="btn btn-sm" onclick="loadDataManager()">↺ Refresh</button>
+        </div>
+      </div>
+      <div class="filters">
+        <input type="text" class="filter-input" id="dm-search" placeholder="Search name or content..." oninput="filterData()" style="flex:1;min-width:160px;margin-bottom:0"/>
+        <select class="filter-input" id="dm-handbook" onchange="filterData()" style="margin-bottom:0">
+          <option value="">All Handbooks</option>
+        </select>
+        <select class="filter-input" id="dm-type" onchange="filterData()" style="margin-bottom:0">
+          <option value="">All Types</option>
+          <option value="url">URL</option>
+          <option value="text">Text</option>
+          <option value="pdf">PDF</option>
+        </select>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Name</th><th>Handbook</th><th>Type</th><th>Words</th><th>Added</th><th>Actions</th></tr></thead>
+          <tbody id="dm-tbody"><tr><td colspan="6" class="empty-state">Loading...</td></tr></tbody>
+        </table>
+      </div>
+      <div class="status" id="dm-status"></div>
+    </div>
+
+    <!-- ══ TAB: VERSIONS ══ -->
+    <div class="panel" id="panel-versions">
+      <div class="save-card">
+        <h3>💾 Save Current Snapshot</h3>
+        <div class="save-row">
+          <input type="text" class="save-input" id="snap-name" placeholder="e.g. Initial Load June 2026"/>
+          <button class="save-btn" onclick="saveSnapshot()">Save Snapshot</button>
+        </div>
+        <textarea class="save-desc" id="snap-desc" placeholder="Optional description..."></textarea>
+        <div class="save-status" id="save-status"></div>
+      </div>
+      <div class="warn-box">⚠️ <strong>Restoring a snapshot</strong> replaces ALL current knowledge base content. Save the current state first if needed.</div>
+      <div id="versions-list"><div class="empty-state">Loading snapshots...</div></div>
+      <div class="status" id="ver-status"></div>
+    </div>
+
+  </div><!-- end content -->
+</div><!-- end shell -->
+
+<!-- EDIT MODAL -->
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-title">Edit Source</div>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <label>Source Name</label><input type="text" id="edit-name"/>
+      <label>Handbook</label><input type="text" id="edit-handbook" placeholder="e.g. Medi-Cal"/>
+      <label>Full Text Content</label>
+      <textarea id="edit-text" oninput="updateWordCount()" style="min-height:280px;font-family:'DM Mono',monospace;font-size:.8rem;"></textarea>
+      <div class="word-count" id="word-count"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-sm btn-outline" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-sm btn-success" id="modal-save-btn" onclick="saveEdit()">Save & Re-ingest</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════
+// STATE
+// ══════════════════════════════════════════════════════
+let adminKey = '';
+let allSources = [];
+let editingId = null;
+let loaderData = null;
+let loaderTarget = 0;
+let loaderStartTime = null;
+let loaderInterval = null;
+let selectedPdfFile = null;
+
+// ══════════════════════════════════════════════════════
+// AUTH
+// ══════════════════════════════════════════════════════
+function login() {
+  const key = document.getElementById('login-key').value.trim();
+  if (!key) return;
+  fetch('/api/admin/list', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({adminKey: key})
+  }).then(r=>r.json()).then(data=>{
+    if (data.error === 'Unauthorized') {
+      document.getElementById('login-error').textContent = 'Incorrect password';
+    } else {
+      adminKey = key;
+      document.getElementById('login-wrap').style.display = 'none';
+      document.getElementById('shell').style.display = 'flex';
+      loadKB();
+    }
+  }).catch(()=>document.getElementById('login-error').textContent='Connection error');
+}
+
+function logout() {
+  adminKey='';
+  document.getElementById('login-wrap').style.display='flex';
+  document.getElementById('shell').style.display='none';
+  document.getElementById('login-key').value='';
+}
+
+// ══════════════════════════════════════════════════════
+// TABS
+// ══════════════════════════════════════════════════════
+function showTab(name) {
+  document.querySelectorAll('.tab').forEach((t,i)=>{
+    const names=['add','loader','kb','data','versions'];
+    t.classList.toggle('active', names[i]===name);
+  });
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.getElementById('panel-'+name).classList.add('active');
+  if (name==='kb') loadKB();
+  if (name==='data') loadDataManager();
+  if (name==='versions') loadVersions();
+}
+
+// ══════════════════════════════════════════════════════
+// STATUS HELPER
+// ══════════════════════════════════════════════════════
+function setStatus(id, type, msg) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.className = 'status '+type;
+  el.textContent = msg;
+}
+
+// ══════════════════════════════════════════════════════
+// ADD CONTENT — URL
+// ══════════════════════════════════════════════════════
+async function ingestUrl() {
+  const url=document.getElementById('url-input').value.trim();
+  const name=document.getElementById('url-name').value.trim();
+  const handbook=document.getElementById('url-handbook').value.trim();
+  if (!url) return setStatus('url-status','error','Please enter a URL');
+  if (!name) return setStatus('url-status','error','Please enter a name');
+  document.getElementById('url-btn').disabled=true;
+  setStatus('url-status','loading','⏳ Fetching and processing...');
+  try {
+    const res=await fetch('/api/admin/ingest-url',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({adminKey,url,name,handbook})});
+    const data=await res.json();
+    if (data.error) setStatus('url-status','error','❌ '+data.error);
+    else { setStatus('url-status','success',`✅ Added "${name}" — ${data.chunks} chunks`); document.getElementById('url-input').value=''; document.getElementById('url-name').value=''; }
+  } catch(err){ setStatus('url-status','error','❌ '+err.message); }
+  document.getElementById('url-btn').disabled=false;
+}
+
+// ══════════════════════════════════════════════════════
+// ADD CONTENT — TEXT
+// ══════════════════════════════════════════════════════
+async function ingestText() {
+  const text=document.getElementById('text-input').value.trim();
+  const name=document.getElementById('text-name').value.trim();
+  const handbook=document.getElementById('text-handbook').value.trim();
+  if (!text) return setStatus('text-status','error','Please paste some text');
+  if (!name) return setStatus('text-status','error','Please enter a source name');
+  document.getElementById('text-btn').disabled=true;
+  setStatus('text-status','loading','⏳ Processing...');
+  try {
+    const res=await fetch('/api/admin/ingest-text',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({adminKey,text,name,handbook})});
+    const data=await res.json();
+    if (data.error) setStatus('text-status','error','❌ '+data.error);
+    else { setStatus('text-status','success',`✅ Added "${name}" — ${data.chunks} chunks`); document.getElementById('text-input').value=''; document.getElementById('text-name').value=''; }
+  } catch(err){ setStatus('text-status','error','❌ '+err.message); }
+  document.getElementById('text-btn').disabled=false;
+}
+
+// ══════════════════════════════════════════════════════
+// ADD CONTENT — PDF
+// ══════════════════════════════════════════════════════
+function pdragOver(e){e.preventDefault();document.getElementById('pdf-drop').classList.add('dragover');}
+function pdragLeave(){document.getElementById('pdf-drop').classList.remove('dragover');}
+function pdropFile(e){e.preventDefault();pdragLeave();selectedPdfFile=e.dataTransfer.files[0];document.getElementById('pdf-selected').textContent='Selected: '+selectedPdfFile.name;}
+function pdfSelected(input){selectedPdfFile=input.files[0];document.getElementById('pdf-selected').textContent='Selected: '+selectedPdfFile.name;}
+
+async function ingestPdf() {
+  if (!selectedPdfFile) return setStatus('pdf-status','error','Please select a PDF');
+  const name=document.getElementById('pdf-name').value.trim()||selectedPdfFile.name;
+  const handbook=document.getElementById('pdf-handbook').value.trim();
+  document.getElementById('pdf-btn').disabled=true;
+  setStatus('pdf-status','loading','⏳ Uploading PDF...');
+  try {
+    const fd=new FormData();
+    fd.append('adminKey',adminKey); fd.append('name',name); fd.append('handbook',handbook); fd.append('pdf',selectedPdfFile);
+    const res=await fetch('/api/admin/ingest-pdf',{method:'POST',body:fd});
+    const data=await res.json();
+    if (data.error) setStatus('pdf-status','error','❌ '+data.error);
+    else { setStatus('pdf-status','success',`✅ Added "${name}" — ${data.chunks} chunks`); selectedPdfFile=null; document.getElementById('pdf-selected').textContent=''; }
+  } catch(err){ setStatus('pdf-status','error','❌ '+err.message); }
+  document.getElementById('pdf-btn').disabled=false;
+}
+
+// ══════════════════════════════════════════════════════
+// BULK LOADER
+// ══════════════════════════════════════════════════════
+function ldragOver(e){e.preventDefault();document.getElementById('loader-drop').classList.add('dragover');}
+function ldragLeave(){document.getElementById('loader-drop').classList.remove('dragover');}
+function ldropFile(e){e.preventDefault();ldragLeave();if(e.dataTransfer.files[0])processLoaderFile(e.dataTransfer.files[0]);}
+function loaderFileSelected(input){if(input.files[0])processLoaderFile(input.files[0]);}
+
+function processLoaderFile(file) {
+  if (!file.name.endsWith('.json')) return setStatus('loader-status','error','Please select a .json file');
+  const reader=new FileReader();
+  reader.onload=(e)=>{
+    try {
+      loaderData=JSON.parse(e.target.result);
+      if (!loaderData.chunks||!Array.isArray(loaderData.chunks)) return setStatus('loader-status','error','Invalid file — missing chunks array');
+      document.getElementById('loader-drop-title').textContent='✅ '+file.name;
+      document.getElementById('loader-drop-sub').textContent=(file.size/1024/1024).toFixed(1)+' MB — ready to load';
+      const s=loaderData.stats||{};
+      document.getElementById('ls-sources').textContent=(s.total_sources||loaderData.sources?.length||'—').toLocaleString();
+      document.getElementById('ls-chunks').textContent=loaderData.chunks.length.toLocaleString();
+      document.getElementById('ls-cats').textContent=(s.categories||'—');
+      document.getElementById('ls-ver').textContent=loaderData.version||'2.0';
+      document.getElementById('loader-stats').style.display='grid';
+      document.getElementById('loader-btn').disabled=false;
+      document.getElementById('loader-btn').textContent=`Load ${loaderData.chunks.length.toLocaleString()} Chunks into Knowledge Base`;
+    } catch(err){ setStatus('loader-status','error','Could not parse JSON: '+err.message); }
+  };
+  reader.readAsText(file);
+}
+
+async function startLoad() {
+  if (!loaderData) return;
+  const clearFirst=document.getElementById('clear-first').checked;
+  if (clearFirst&&!confirm('Delete ALL existing chunks before loading?')) return;
+  document.getElementById('loader-btn').disabled=true;
+  document.getElementById('loader-btn').textContent='Loading...';
+  loaderTarget=loaderData.chunks.length;
+  loaderStartTime=Date.now();
+  document.getElementById('progress-card').style.display='block';
+  document.getElementById('prog-target').textContent=loaderTarget.toLocaleString();
+  addLoadLog('info',`Starting bulk load of ${loaderTarget} chunks...`);
+  try {
+    const res=await fetch('/api/admin/bulk-load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({adminKey,chunks:loaderData.chunks,sources:loaderData.sources||[],clearFirst})});
+    const data=await res.json();
+    if (data.error){setStatus('loader-status','error','❌ '+data.error);return;}
+    addLoadLog('success','Load job started — polling every 15s');
+    loaderInterval=setInterval(pollProgress,15000);
+  } catch(err){ setStatus('loader-status','error','❌ '+err.message); }
+}
+
+async function pollProgress() {
+  try {
+    const res=await fetch('/api/admin/bulk-progress',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({adminKey})});
+    const data=await res.json();
+    const current=data.chunks_in_db||0;
+    document.getElementById('prog-current').textContent=current.toLocaleString();
+    const pct=loaderTarget>0?Math.min(100,Math.round(current/loaderTarget*100)):0;
+    document.getElementById('prog-pct').textContent=pct+'%';
+    document.getElementById('prog-bar').style.width=pct+'%';
+    document.getElementById('prog-label').textContent=`${current.toLocaleString()} of ${loaderTarget.toLocaleString()} chunks`;
+    if (loaderStartTime&&current>0){const e=(Date.now()-loaderStartTime)/1000;const r=Math.round((loaderTarget-current)/(current/e));document.getElementById('prog-eta').textContent=r>0?`~${Math.floor(r/60)}m ${r%60}s remaining`:'';}
+    addLoadLog('info',`Progress: ${current}/${loaderTarget} (${pct}%)`);
+    if (pct>=100){clearInterval(loaderInterval);document.getElementById('complete-banner').classList.add('show');document.getElementById('prog-label').textContent='Complete!';addLoadLog('success','🎉 All chunks loaded!');}
+  } catch(err){addLoadLog('error','Poll error: '+err.message);}
+}
+
+function addLoadLog(type,msg){const b=document.getElementById('load-log');const d=document.createElement('div');d.className='log-'+type;d.textContent='['+new Date().toLocaleTimeString()+'] '+msg;b.appendChild(d);b.scrollTop=b.scrollHeight;}
+
+// ══════════════════════════════════════════════════════
+// KNOWLEDGE BASE
+// ══════════════════════════════════════════════════════
+async function loadKB() {
+  try {
+    const res=await fetch('/api/admin/list',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({adminKey})});
+    const data=await res.json();
+    document.getElementById('kb-total').textContent=(data.total||0).toLocaleString();
+    const sources=data.sources||{};
+    const count=Object.keys(sources).length;
+    document.getElementById('kb-sources').textContent=count;
+    const list=document.getElementById('kb-source-list');
+    if (count===0){list.innerHTML='<div class="empty-state">No content yet</div>';return;}
+    list.innerHTML=Object.entries(sources).map(([src,n])=>`
+      <div class="source-row">
+        <span class="source-name" title="${src}">${src}</span>
+        <span class="source-chunks">${n} chunks</span>
+        <button class="abtn abtn-del" onclick="deleteSource('${src.replace(/'/g,"\\'")}')">Remove</button>
+      </div>`).join('');
+  } catch(err){setStatus('kb-status','error','❌ '+err.message);}
+}
+
+async function deleteSource(source) {
+  if (!confirm(`Remove "${source}" from knowledge base?`)) return;
+  try {
+    await fetch('/api/admin/delete-source',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({adminKey,source})});
+    setStatus('kb-status','success','✅ Removed "'+source+'"');
+    loadKB();
+  } catch(err){setStatus('kb-status','error','❌ '+err.message);}
+}
+
+// ══════════════════════════════════════════════════════
+// DATA MANAGER
+// ══════════════════════════════════════════════════════
+async function loadDataManager() {
+  try {
+    const res=await fetch('/api/admin/raw-sources',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({adminKey})});
+    const data=await res.json();
+    allSources=data.sources||[];
+    document.getElementById('data-stats').textContent=allSources.length+' sources';
+    const hbs=[...new Set(allSources.map(s=>s.handbook).filter(Boolean))];
+    const sel=document.getElementById('dm-handbook');
+    sel.innerHTML='<option value="">All Handbooks</option>'+hbs.map(h=>`<option value="${h}">${h}</option>`).join('');
+    renderDataTable(allSources);
+  } catch(err){setStatus('dm-status','error','❌ '+err.message);}
+}
+
+function filterData(){
+  const s=document.getElementById('dm-search').value.toLowerCase();
+  const h=document.getElementById('dm-handbook').value;
+  const t=document.getElementById('dm-type').value;
+  renderDataTable(allSources.filter(src=>
+    (!s||src.name.toLowerCase().includes(s))&&
+    (!h||src.handbook===h)&&
+    (!t||src.source_type===t)
+  ));
+}
+
+function renderDataTable(sources){
+  const tb=document.getElementById('dm-tbody');
+  if(!sources.length){tb.innerHTML='<tr><td colspan="6" class="empty-state">No sources found</td></tr>';return;}
+  tb.innerHTML=sources.map(s=>{
+    const words=s.metadata?.word_count||0;
+    const date=new Date(s.fetched_at).toLocaleDateString();
+    return `<tr>
+      <td class="td-name" title="${s.name}">${s.name}</td>
+      <td class="td-mono">${s.handbook||'—'}</td>
+      <td class="td-mono"><span class="type-${s.source_type}">${(s.source_type||'').toUpperCase()}</span></td>
+      <td class="td-mono">${words.toLocaleString()}</td>
+      <td class="td-mono">${date}</td>
+      <td><div class="td-actions">
+        <button class="abtn abtn-edit" onclick="editSource(${s.id})">Edit</button>
+        <button class="abtn abtn-del" onclick="deleteRawSource(${s.id},'${s.name.replace(/'/g,"\\'")}')">Delete</button>
+      </div></td>
+    </tr>`;
+  }).join('');
+}
+
+async function editSource(id){
+  const src=allSources.find(s=>s.id===id);
+  if(!src)return;
+  editingId=id;
+  // fetch full text
+  const res=await fetch('/api/admin/raw-source-text',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({adminKey,id})});
+  const data=await res.json();
+  document.getElementById('modal-title').textContent='Edit Source';
+  document.getElementById('edit-name').value=data.name||'';
+  document.getElementById('edit-handbook').value=data.handbook||'';
+  document.getElementById('edit-text').value=data.raw_text||'';
+  document.getElementById('edit-text').readOnly=false;
+  document.getElementById('modal-save-btn').style.display='block';
+  updateWordCount();
+  document.getElementById('modal').classList.add('open');
+}
+
+async function saveEdit(){
+  const name=document.getElementById('edit-name').value.trim();
+  const handbook=document.getElementById('edit-handbook').value.trim();
+  const rawText=document.getElementById('edit-text').value.trim();
+  if(!name||!rawText)return alert('Name and content required');
+  document.getElementById('modal-save-btn').textContent='Saving...';
+  document.getElementById('modal-save-btn').disabled=true;
+  try {
+    const res=await fetch('/api/admin/update-source',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({adminKey,id:editingId,name,rawText,handbook})});
+    const data=await res.json();
+    if(data.error)throw new Error(data.error);
+    closeModal();
+    setStatus('dm-status','success',`✅ Updated "${name}" — ${data.chunks} chunks`);
+    loadDataManager();
+  } catch(err){setStatus('dm-status','error','❌ '+err.message);}
+  document.getElementById('modal-save-btn').textContent='Save & Re-ingest';
+  document.getElementById('modal-save-btn').disabled=false;
+}
+
+async function deleteRawSource(id,name){
+  if(!confirm(`Delete "${name}" from archive and knowledge base?`))return;
+  try {
+    await fetch('/api/admin/delete-source',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({adminKey,source:name,rawId:id})});
+    setStatus('dm-status','success','✅ Deleted "'+name+'"');
+    loadDataManager();
+  } catch(err){setStatus('dm-status','error','❌ '+err.message);}
+}
+
+async function exportData(){
+  try {
+    const res=await fetch('/api/admin/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({adminKey})});
+    const data=await res.json();
+    const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');a.href=url;a.download=`medi-cal-knowledge-base-${new Date().toISOString().split('T')[0]}.json`;a.click();URL.revokeObjectURL(url);
+  } catch(err){setStatus('dm-status','error','❌ '+err.message);}
+}
+
+function closeModal(){document.getElementById('modal').classList.remove('open');editingId=null;}
+function updateWordCount(){const t=document.getElementById('edit-text').value;document.getElementById('word-count').textContent=t.split(/\s+/).filter(w=>w).length.toLocaleString()+' words';}
+
+// ══════════════════════════════════════════════════════
+// VERSIONS
+// ══════════════════════════════════════════════════════
+async function loadVersions(){
+  try {
+    const res=await fetch('/api/admin/snapshot-list',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({adminKey})});
+    const data=await res.json();
+    renderVersions(data.snapshots||[]);
+  } catch(err){setStatus('ver-status','error','❌ '+err.message);}
+}
+
+function renderVersions(snaps){
+  const el=document.getElementById('versions-list');
+  if(!snaps.length){el.innerHTML='<div class="empty-state">No snapshots yet — save one above!</div>';return;}
+  el.innerHTML=snaps.map(s=>`
+    <div class="version-card">
+      <div style="flex:1">
+        <div class="version-name">${s.name}</div>
+        ${s.description?`<div class="version-desc">${s.description}</div>`:''}
+        <div class="version-meta">
+          <span class="version-stat"><strong>${(s.chunk_count||0).toLocaleString()}</strong> chunks</span>
+          <span class="version-stat">${new Date(s.created_at).toLocaleString()}</span>
+        </div>
+      </div>
+      <div class="version-actions">
+        <button class="vbtn vbtn-restore" onclick="restoreSnapshot(${s.id},'${s.name.replace(/'/g,"\\'")}')">↺ Restore</button>
+        <button class="vbtn vbtn-delete" onclick="deleteSnapshot(${s.id},'${s.name.replace(/'/g,"\\'")}')">Delete</button>
+      </div>
+    </div>`).join('');
+}
+
+async function saveSnapshot(){
+  const name=document.getElementById('snap-name').value.trim();
+  const desc=document.getElementById('snap-desc').value.trim();
+  if(!name)return alert('Please enter a snapshot name');
+  setSaveStatus('loading','⏳ Saving snapshot...');
+  try {
+    const res=await fetch('/api/admin/snapshot-save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({adminKey,name,description:desc})});
+    const data=await res.json();
+    if(data.error)throw new Error(data.error);
+    setSaveStatus('success',`✅ Saved "${name}" — ${data.chunks} chunks`);
+    document.getElementById('snap-name').value='';document.getElementById('snap-desc').value='';
+    loadVersions();
+  } catch(err){setSaveStatus('error','❌ '+err.message);}
+}
+
+async function restoreSnapshot(id,name){
+  if(!confirm(`Restore "${name}"?\n\nThis replaces ALL current knowledge base content.`))return;
+  setStatus('ver-status','loading',`⏳ Restoring "${name}"... check back in a few minutes`);
+  try {
+    const res=await fetch('/api/admin/snapshot-restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({adminKey,id})});
+    const data=await res.json();
+    if(data.error)throw new Error(data.error);
+    setStatus('ver-status','success',`✅ Restore started — ${data.total} chunks re-embedding in background`);
+  } catch(err){setStatus('ver-status','error','❌ '+err.message);}
+}
+
+async function deleteSnapshot(id,name){
+  if(!confirm(`Delete snapshot "${name}"?`))return;
+  try {
+    await fetch('/api/admin/snapshot-delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({adminKey,id})});
+    setStatus('ver-status','success','✅ Deleted "'+name+'"');
+    loadVersions();
+  } catch(err){setStatus('ver-status','error','❌ '+err.message);}
+}
+
+function setSaveStatus(type,msg){const el=document.getElementById('save-status');el.className='save-status '+type;el.textContent=msg;}
+</script>
+</body>
+</html>
