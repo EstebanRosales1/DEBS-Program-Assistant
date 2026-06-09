@@ -348,6 +348,14 @@ tr:hover td{background:rgba(247,243,235,.5);}
         </label>
         <div id="clear-warn" style="display:none;font-size:.78rem;color:var(--error);margin-bottom:.8rem;font-family:'DM Mono',monospace;">⚠️ This will delete all current chunks</div>
 
+        <label class="checkbox-label">
+          <input type="checkbox" id="chunks-only" checked/>
+          Chunks only — skip saving to raw archive (recommended when PDFs already uploaded)
+        </label>
+        <div style="font-size:.75rem;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:1rem;margin-top:-.4rem;">
+          ✓ Check this when PDFs were uploaded via Archive Only mode first. Prevents duplicate raw sources.
+        </div>
+
         <button class="btn" id="loader-btn" onclick="startLoad()" disabled>Select a file to continue</button>
         <div class="status" id="loader-status"></div>
       </div>
@@ -382,7 +390,9 @@ tr:hover td{background:rgba(247,243,235,.5);}
         <div class="kb-stats">
           <div class="kb-stat"><div class="kb-stat-num" id="kb-total">—</div><div class="kb-stat-label">Total Chunks</div></div>
           <div class="kb-stat"><div class="kb-stat-num" id="kb-sources">—</div><div class="kb-stat-label">Sources</div></div>
+          <div class="kb-stat"><div class="kb-stat-num" id="kb-handbooks">—</div><div class="kb-stat-label">Handbooks</div></div>
         </div>
+        <div id="kb-handbook-breakdown" style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1rem;"></div>
         <div class="source-list" id="kb-source-list"><div class="empty-state">Loading...</div></div>
         <div class="status" id="kb-status"></div>
       </div>
@@ -692,6 +702,7 @@ function processLoaderFile(file) {
 async function startLoad() {
   if (!loaderData) return;
   const clearFirst=document.getElementById('clear-first').checked;
+  const chunksOnly=document.getElementById('chunks-only').checked;
   if (clearFirst&&!confirm('Delete ALL existing chunks before loading?')) return;
   document.getElementById('loader-btn').disabled=true;
   document.getElementById('loader-btn').textContent='Loading...';
@@ -701,7 +712,7 @@ async function startLoad() {
   document.getElementById('prog-target').textContent=loaderTarget.toLocaleString();
   addLoadLog('info',`Starting bulk load of ${loaderTarget} chunks...`);
   try {
-    const res=await fetch('/api/admin/bulk-load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({adminKey,chunks:loaderData.chunks,sources:loaderData.sources||[],clearFirst})});
+    const res=await fetch('/api/admin/bulk-load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({adminKey,chunks:loaderData.chunks,sources:loaderData.sources||[],clearFirst,chunksOnly})});
     const data=await res.json();
     if (data.error){setStatus('loader-status','error','❌ '+data.error);return;}
     addLoadLog('success','Load job started — polling every 15s');
@@ -737,7 +748,17 @@ async function loadKB() {
     document.getElementById('kb-total').textContent=(data.total||0).toLocaleString();
     const sources=data.sources||{};
     const count=Object.keys(sources).length;
-    document.getElementById('kb-sources').textContent=count;
+    document.getElementById('kb-sources').textContent=count.toLocaleString();
+
+    // Handbook breakdown
+    const byHandbook = data.byHandbook || {};
+    const hbCount = Object.keys(byHandbook).length;
+    document.getElementById('kb-handbooks').textContent = hbCount;
+    const breakdown = document.getElementById('kb-handbook-breakdown');
+    breakdown.innerHTML = Object.entries(byHandbook).map(([hb, n]) =>
+      `<span style="background:var(--navy);color:var(--gold);font-family:'DM Mono',monospace;font-size:.72rem;padding:4px 12px;border-radius:20px;">${hb}: ${n.toLocaleString()} chunks</span>`
+    ).join('');
+
     const list=document.getElementById('kb-source-list');
     if (count===0){list.innerHTML='<div class="empty-state">No content yet</div>';return;}
     list.innerHTML=Object.entries(sources).map(([src,n])=>`
