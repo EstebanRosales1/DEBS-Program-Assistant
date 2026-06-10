@@ -407,14 +407,29 @@ app.post('/api/admin/list', async (req, res) => {
 app.post('/api/admin/raw-sources', async (req, res) => {
   if (!authCheck(req, res)) return;
   try {
-    const response = await fetch(
-      supabaseUrl('raw_sources?select=id,name,source_type,handbook,fetched_at,metadata,source_url&order=fetched_at.desc'),
-      { headers: supabaseHeaders() }
-    );
-    const data = await response.json();
-    // Fetch previews separately (first 200 chars of raw_text)
-    const withPreviews = Array.isArray(data) ? data : [];
-    res.json({ sources: withPreviews, total: withPreviews.length });
+    // Get total count
+    const countRes = await fetch(supabaseUrl('raw_sources?select=count'), {
+      headers: supabaseHeaders({ 'Prefer': 'count=exact', 'Range': '0-0' })
+    });
+    const countHeader = countRes.headers.get('content-range');
+    const total = countHeader ? parseInt(countHeader.split('/')[1]) : 0;
+
+    // Fetch all in batches
+    let allSources = [];
+    let offset = 0;
+    const batchSize = 1000;
+    while (offset < total) {
+      const batchRes = await fetch(
+        supabaseUrl(`raw_sources?select=id,name,source_type,handbook,fetched_at,metadata,source_url&order=fetched_at.desc&limit=${batchSize}&offset=${offset}`),
+        { headers: supabaseHeaders({ 'Range': `${offset}-${offset + batchSize - 1}` }) }
+      );
+      const batch = await batchRes.json();
+      if (!Array.isArray(batch) || batch.length === 0) break;
+      allSources = allSources.concat(batch);
+      offset += batchSize;
+    }
+
+    res.json({ sources: allSources, total: allSources.length });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -534,25 +549,57 @@ app.post('/api/admin/snapshot-save', async (req, res) => {
   if (!authCheck(req, res)) return;
   const { name, description } = req.body;
   try {
-    // Get all current documents (without embeddings to save space)
-    const docsRes = await fetch(supabaseUrl('documents?select=id,content,metadata&order=id.asc'), {
-      headers: supabaseHeaders()
+    // Get total document count first
+    const countRes = await fetch(supabaseUrl('documents?select=count'), {
+      headers: supabaseHeaders({ 'Prefer': 'count=exact', 'Range': '0-0' })
     });
-    const docs = await docsRes.json();
+    const countHeader = countRes.headers.get('content-range');
+    const total = countHeader ? parseInt(countHeader.split('/')[1]) : 0;
 
-    // Get all raw sources
-    const rawRes = await fetch(supabaseUrl('raw_sources?select=*&order=id.asc'), {
-      headers: supabaseHeaders()
+    // Fetch all documents in batches of 1000
+    let allDocs = [];
+    let offset = 0;
+    const batchSize = 1000;
+    while (offset < total) {
+      const batchRes = await fetch(
+        supabaseUrl(`documents?select=id,content,metadata&order=id.asc&limit=${batchSize}&offset=${offset}`),
+        { headers: supabaseHeaders({ 'Range': `${offset}-${offset + batchSize - 1}` }) }
+      );
+      const batch = await batchRes.json();
+      if (!Array.isArray(batch) || batch.length === 0) break;
+      allDocs = allDocs.concat(batch);
+      offset += batchSize;
+      console.log(`Snapshot: fetched ${allDocs.length}/${total} documents`);
+    }
+
+    // Get all raw sources in batches too
+    const rawCountRes = await fetch(supabaseUrl('raw_sources?select=count'), {
+      headers: supabaseHeaders({ 'Prefer': 'count=exact', 'Range': '0-0' })
     });
-    const raws = await rawRes.json();
+    const rawCountHeader = rawCountRes.headers.get('content-range');
+    const rawTotal = rawCountHeader ? parseInt(rawCountHeader.split('/')[1]) : 0;
+
+    let allRaws = [];
+    let rawOffset = 0;
+    while (rawOffset < rawTotal) {
+      const rawBatch = await fetch(
+        supabaseUrl(`raw_sources?select=*&order=id.asc&limit=${batchSize}&offset=${rawOffset}`),
+        { headers: supabaseHeaders({ 'Range': `${rawOffset}-${rawOffset + batchSize - 1}` }) }
+      );
+      const batch = await rawBatch.json();
+      if (!Array.isArray(batch) || batch.length === 0) break;
+      allRaws = allRaws.concat(batch);
+      rawOffset += batchSize;
+    }
 
     await supabaseInsert('snapshots', {
       name, description,
-      chunk_count: docs.length,
-      data: { documents: docs, raw_sources: raws }
+      chunk_count: allDocs.length,
+      data: { documents: allDocs, raw_sources: allRaws }
     }, 'return=minimal');
 
-    res.json({ success: true, chunks: docs.length, sources: raws.length });
+    console.log(`Snapshot saved: ${allDocs.length} chunks, ${allRaws.length} sources`);
+    res.json({ success: true, chunks: allDocs.length, sources: allRaws.length });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
