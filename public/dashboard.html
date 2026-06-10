@@ -327,7 +327,7 @@ tr:hover td{background:rgba(247,243,235,.5);}
       <div class="card">
         <div class="card-header">
           <div class="card-icon icon-bulk">⚡</div>
-          <div><div class="card-title">Load Optimized Knowledge Base</div><div class="card-desc">Upload the <code>medi-cal-optimized.json</code> file. 517 sources, 1,021 chunks, pre-cleaned and optimized. Takes ~30-45 minutes in background.</div></div>
+          <div><div class="card-title">Bulk Knowledge Base Loader</div><div class="card-desc">Upload an optimized JSON file to load a full handbook into the knowledge base. Processing runs in the background.</div></div>
         </div>
 
         <div class="stats-grid" id="loader-stats" style="display:none">
@@ -338,22 +338,30 @@ tr:hover td{background:rgba(247,243,235,.5);}
         </div>
 
         <div class="file-drop" id="loader-drop" onclick="document.getElementById('loader-input').click()" ondragover="ldragOver(event)" ondragleave="ldragLeave()" ondrop="ldropFile(event)">
-          <div class="file-drop-text"><strong id="loader-drop-title">Click to choose or drag & drop</strong><span id="loader-drop-sub">medi-cal-optimized.json</span></div>
+          <div class="file-drop-text"><strong id="loader-drop-title">Click to choose or drag & drop</strong><span id="loader-drop-sub">Select an optimized .json file</span></div>
         </div>
         <input type="file" id="loader-input" accept=".json" onchange="loaderFileSelected(this)"/>
 
-        <label class="checkbox-label">
-          <input type="checkbox" id="clear-first" onchange="document.getElementById('clear-warn').style.display=this.checked?'block':'none'"/>
-          Clear existing knowledge base before loading
-        </label>
-        <div id="clear-warn" style="display:none;font-size:.78rem;color:var(--error);margin-bottom:.8rem;font-family:'DM Mono',monospace;">⚠️ This will delete all current chunks</div>
+        <!-- Load options -->
+        <div style="background:var(--cream);border-radius:10px;padding:1rem;margin-bottom:1rem;">
+          <div style="font-family:'DM Mono',monospace;font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.8rem;">Load Options</div>
 
-        <label class="checkbox-label">
-          <input type="checkbox" id="chunks-only" checked/>
-          Chunks only — skip saving to raw archive (recommended when PDFs already uploaded)
-        </label>
-        <div style="font-size:.75rem;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:1rem;margin-top:-.4rem;">
-          ✓ Check this when PDFs were uploaded via Archive Only mode first. Prevents duplicate raw sources.
+          <label class="checkbox-label" style="margin-bottom:.5rem;">
+            <input type="checkbox" id="chunks-only" checked/>
+            <div>
+              <div style="font-weight:500;">Chunks Only</div>
+              <div style="font-size:.75rem;color:var(--muted);font-family:'DM Mono',monospace;">Only embed chunks — skip saving to raw archive. Use this when PDFs were already uploaded via Archive Only mode.</div>
+            </div>
+          </label>
+
+          <label class="checkbox-label" style="margin-bottom:.5rem;">
+            <input type="checkbox" id="clear-first" onchange="document.getElementById('clear-warn').style.display=this.checked?'block':'none'"/>
+            <div>
+              <div style="font-weight:500;">Clear Before Loading</div>
+              <div style="font-size:.75rem;color:var(--muted);font-family:'DM Mono',monospace;">Delete all existing chunks before loading. Use only when doing a full reload.</div>
+            </div>
+          </label>
+          <div id="clear-warn" style="display:none;font-size:.78rem;color:var(--error);margin-top:.2rem;font-family:'DM Mono',monospace;">⚠️ This will delete ALL current chunks from the knowledge base</div>
         </div>
 
         <button class="btn" id="loader-btn" onclick="startLoad()" disabled>Select a file to continue</button>
