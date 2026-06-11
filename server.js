@@ -188,7 +188,21 @@ ${context}
 
     const data = await response.json();
     if (data.error) throw new Error(data.error.message);
-    res.json({ reply: data.content[0].text, chunksFound: Array.isArray(chunks) ? chunks.length : 0 });
+
+    const reply = data.content[0].text;
+    const chunkData = Array.isArray(chunks) ? chunks.map(c => ({
+      source: c.metadata?.source || 'Unknown',
+      handbook: c.metadata?.handbook || 'Unknown',
+      similarity: c.similarity || 0,
+      preview: c.content?.substring(0, 100)
+    })) : [];
+
+    res.json({
+      reply,
+      chunksFound: chunkData.length,
+      avgSimilarity: chunkData.length > 0 ? chunkData.reduce((a,b) => a + b.similarity, 0) / chunkData.length : 0,
+      chunkData
+    });
   } catch (err) {
     console.error('Chat error:', err.message);
     res.status(500).json({ error: err.message });
@@ -675,13 +689,267 @@ app.post('/api/admin/snapshot-delete', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ROUTES
+// RATINGS & AUTO-OPTIMIZATION
 // ══════════════════════════════════════════════════════════════════════════════
+
+// Save a rating
+app.post('/api/rate', async (req, res) => {
+  const { question, answer, rating, comment, chunkData, chunksFound, avgSimilarity } = req.body;
+  if (!question || !answer || !rating) return res.status(400).json({ error: 'question, answer, rating required' });
+  try {
+    const inserted = await supabaseInsert('ratings', {
+      question, answer, rating,
+      comment: comment || null,
+      chunks_used: chunkData || [],
+      chunks_found: chunksFound || 0,
+      avg_similarity: avgSimilarity || 0,
+      optimized: false
+    }, 'return=representation');
+
+    const ratingId = Array.isArray(inserted) && inserted[0] ? inserted[0].id : null;
+    res.json({ success: true });
+
+    // If thumbs down — generate optimization suggestion in background (goes to PENDING)
+    if (rating === -1) {
+      setImmediate(() => {
+        optimizeChunksForQuestion(question, answer, chunkData || [], ratingId)
+          .catch(err => console.error('Post-rating optimization error:', err.message));
+      });
+    }
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Background optimization — saves to PENDING, not directly to knowledge base
+async function optimizeChunksForQuestion(question, answer, chunkData, ratingId) {
+  try {
+    console.log(`Generating optimization suggestion for: "${question}"`);
+
+    if (!chunkData || chunkData.length === 0) {
+      console.log('No chunks to optimize');
+      return;
+    }
+
+    const sources = [...new Set(chunkData.map(c => c.source))].join(', ');
+    const handbook = chunkData[0]?.handbook || 'Unknown';
+
+    const analysisPrompt = `A user asked this question and gave the answer a thumbs down (bad rating):
+
+QUESTION: ${question}
+
+ANSWER GIVEN: ${answer}
+
+SOURCES USED: ${sources}
+
+Analyze why the answer may have been unsatisfactory. Then write improved content that would better answer this question. The improved text should:
+1. Directly address the question in the first sentence
+2. Include all relevant policy details, steps, or rules
+3. Be written as clear policy guidance (not conversational)
+4. Be 200-400 words
+
+Respond in JSON format only — no preamble, no markdown backticks:
+{
+  "issue": "brief description of what was wrong or missing",
+  "improved_content": "the improved chunk text here",
+  "suggested_source_name": "a clear descriptive name for this content"
+}`;
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 1000,
+        messages: [{ role: 'user', content: analysisPrompt }]
+      })
+    });
+
+    const data = await response.json();
+    if (data.error) throw new Error(data.error.message);
+
+    const text = data.content[0].text;
+    const clean = text.replace(/```json|```/g, '').trim();
+    const result = JSON.parse(clean);
+
+    // Save as PENDING — not added to knowledge base yet
+    await supabaseInsert('pending_optimizations', {
+      rating_id: ratingId || null,
+      question,
+      original_answer: answer,
+      issue_identified: result.issue,
+      suggested_content: result.improved_content,
+      suggested_source_name: result.suggested_source_name,
+      handbook,
+      status: 'pending'
+    }, 'return=minimal');
+
+    console.log(`✅ Optimization suggestion saved as PENDING for: "${question}"`);
+  } catch (err) {
+    console.error(`Optimization suggestion failed for "${question}": ${err.message}`);
+  }
+}
+
+// Get all ratings (admin)
+app.post('/api/admin/ratings', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  try {
+    const response = await fetch(
+      supabaseUrl('ratings?select=*&order=created_at.desc&limit=200'),
+      { headers: supabaseHeaders() }
+    );
+    const data = await response.json();
+    const total = data.length;
+    const positive = data.filter(r => r.rating === 1).length;
+    const negative = data.filter(r => r.rating === -1).length;
+    const optimized = data.filter(r => r.optimized).length;
+    const avgSim = data.length > 0
+      ? (data.reduce((a, b) => a + (b.avg_similarity || 0), 0) / data.length).toFixed(3)
+      : 0;
+    res.json({ ratings: data, stats: { total, positive, negative, optimized, avgSimilarity: avgSim } });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Get pending optimizations
+app.post('/api/admin/pending-optimizations', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  try {
+    const response = await fetch(
+      supabaseUrl('pending_optimizations?select=*&order=created_at.desc'),
+      { headers: supabaseHeaders() }
+    );
+    const data = await response.json();
+    const pending = Array.isArray(data) ? data.filter(d => d.status === 'pending') : [];
+    const approved = Array.isArray(data) ? data.filter(d => d.status === 'approved') : [];
+    const rejected = Array.isArray(data) ? data.filter(d => d.status === 'rejected') : [];
+    res.json({ optimizations: data, stats: { pending: pending.length, approved: approved.length, rejected: rejected.length, total: data.length } });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Approve optimization — adds to knowledge base
+app.post('/api/admin/approve-optimization', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  const { id, content, sourceName } = req.body;
+  try {
+    // Get the optimization
+    const optRes = await fetch(supabaseUrl(`pending_optimizations?id=eq.${id}&select=*`), {
+      headers: supabaseHeaders()
+    });
+    const opts = await optRes.json();
+    if (!opts[0]) return res.status(404).json({ error: 'Optimization not found' });
+    const opt = opts[0];
+
+    // Use edited content if provided, otherwise use original suggestion
+    const finalContent = content || opt.suggested_content;
+    const finalName = sourceName || opt.suggested_source_name;
+
+    // Embed and add to knowledge base
+    const embedding = await getEmbedding(finalContent);
+    await supabaseInsert('documents', {
+      content: finalContent,
+      metadata: {
+        source: finalName,
+        handbook: opt.handbook || 'Optimized',
+        category: 'Admin-Approved',
+        optimized: true,
+        original_question: opt.question,
+        optimization_date: new Date().toISOString()
+      },
+      embedding
+    }, 'return=minimal');
+
+    // Save to raw_sources
+    await supabaseInsert('raw_sources', {
+      name: finalName,
+      source_type: 'text',
+      handbook: opt.handbook || 'Optimized',
+      raw_text: finalContent,
+      metadata: {
+        admin_approved: true,
+        original_question: opt.question,
+        issue: opt.issue_identified,
+        word_count: finalContent.split(' ').length
+      }
+    }, 'return=minimal');
+
+    // Update status to approved
+    await fetch(supabaseUrl(`pending_optimizations?id=eq.${id}`), {
+      method: 'PATCH',
+      headers: supabaseHeaders({ 'Prefer': 'return=minimal' }),
+      body: JSON.stringify({ status: 'approved', reviewed_at: new Date().toISOString() })
+    });
+
+    // Mark rating as optimized
+    if (opt.rating_id) {
+      await fetch(supabaseUrl(`ratings?id=eq.${opt.rating_id}`), {
+        method: 'PATCH',
+        headers: supabaseHeaders({ 'Prefer': 'return=minimal' }),
+        body: JSON.stringify({ optimized: true, optimization_notes: opt.issue_identified })
+      });
+    }
+
+    res.json({ success: true, source: finalName });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Reject optimization
+app.post('/api/admin/reject-optimization', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  const { id, notes } = req.body;
+  try {
+    await fetch(supabaseUrl(`pending_optimizations?id=eq.${id}`), {
+      method: 'PATCH',
+      headers: supabaseHeaders({ 'Prefer': 'return=minimal' }),
+      body: JSON.stringify({ status: 'rejected', reviewed_at: new Date().toISOString(), reviewer_notes: notes || null })
+    });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Manually trigger optimization for a specific rating
+app.post('/api/admin/optimize-rating', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  const { ratingId } = req.body;
+  try {
+    const ratingRes = await fetch(supabaseUrl(`ratings?id=eq.${ratingId}&select=*`), {
+      headers: supabaseHeaders()
+    });
+    const ratings = await ratingRes.json();
+    if (!ratings[0]) return res.status(404).json({ error: 'Rating not found' });
+    const r = ratings[0];
+    res.json({ success: true, message: 'Optimization suggestion being generated' });
+    optimizeChunksForQuestion(r.question, r.answer, r.chunks_used || [], r.id);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Get optimization stats
+app.post('/api/admin/optimization-stats', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  try {
+    const response = await fetch(
+      supabaseUrl("documents?select=id,metadata&metadata->>category=eq.Admin-Approved"),
+      { headers: supabaseHeaders() }
+    );
+    const data = await response.json();
+    res.json({ auto_optimized_chunks: Array.isArray(data) ? data.length : 0 });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Delete a rating
+app.post('/api/admin/delete-rating', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  const { id } = req.body;
+  try {
+    await fetch(supabaseUrl(`ratings?id=eq.${id}`), { method: 'DELETE', headers: supabaseHeaders() });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', supabase: !!SUPABASE_URL, anthropic: !!ANTHROPIC_API_KEY, voyage: !!VOYAGE_API_KEY });
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+// ROUTES
+// ══════════════════════════════════════════════════════════════════════════════
 app.get('/admin', (req, res) => res.sendFile('dashboard.html', { root: 'public' }));
 app.get('/dashboard', (req, res) => res.sendFile('dashboard.html', { root: 'public' }));
 app.get('/data', (req, res) => res.sendFile('dashboard.html', { root: 'public' }));
