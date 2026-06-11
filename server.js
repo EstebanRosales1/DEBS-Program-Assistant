@@ -96,10 +96,12 @@ async function getEmbedding(text, inputType = 'document') {
 
 // ─── Core ingestion ────────────────────────────────────────────────────────
 
-async function saveRawSource(name, sourceType, rawText, handbook, sourceUrl = null) {
+async function saveRawSource(name, sourceType, rawText, handbook, sourceUrl = null, sessionId = null, sessionName = null) {
   const result = await supabaseInsert('raw_sources', {
     name, source_type: sourceType, source_url: sourceUrl,
     raw_text: rawText, handbook,
+    session_id: sessionId,
+    session_name: sessionName,
     metadata: { char_count: rawText.length, word_count: rawText.split(' ').length }
   });
   return result[0].id;
@@ -108,20 +110,27 @@ async function saveRawSource(name, sourceType, rawText, handbook, sourceUrl = nu
 async function ingestChunks(chunks) {
   let stored = 0;
   for (const chunk of chunks) {
-    const embedding = await getEmbedding(chunk.content);
-    await supabaseInsert('documents', {
-      content: chunk.content, metadata: chunk.metadata, embedding
-    }, 'return=minimal');
-    stored++;
-    await sleep(200);
+    let success = false;
+    let attempts = 0;
+    while (!success && attempts < 3) {
+      try {
+        attempts++;
+        const embedding = await getEmbedding(chunk.content);
+        await supabaseInsert('documents', { content: chunk.content, metadata: chunk.metadata, embedding }, 'return=minimal');
+        stored++;
+        success = true;
+        await sleep(400);
+      } catch (err) {
+        if (attempts < 3) await sleep(attempts * 2000);
+        else throw err;
+      }
+    }
   }
   return stored;
 }
 
-async function processAndIngest(rawText, name, handbook, sourceType, sourceUrl = null) {
-  // 1. Save raw source
-  const rawId = await saveRawSource(name, sourceType, rawText, handbook, sourceUrl);
-  // 2. Chunk and embed
+async function processAndIngest(rawText, name, handbook, sourceType, sourceUrl = null, sessionId = null, sessionName = null) {
+  const rawId = await saveRawSource(name, sourceType, rawText, handbook, sourceUrl, sessionId, sessionName);
   const chunks = chunkText(rawText, name, handbook);
   const stored = await ingestChunks(chunks);
   return { rawId, chunks: stored };
@@ -192,22 +201,32 @@ ${context}
 
 app.post('/api/admin/ingest-url', async (req, res) => {
   if (!authCheck(req, res)) return;
-  const { url, name, handbook = '' } = req.body;
+  const { url, name, handbook = '', archiveOnly = false, sessionId = null, sessionName = null } = req.body;
   try {
     const response = await fetch(url);
     const html = await response.text();
     const rawText = stripHtml(html);
-    const result = await processAndIngest(rawText, name || url, handbook, 'url', url);
-    res.json({ success: true, ...result, source: name || url });
+    if (archiveOnly) {
+      const rawId = await saveRawSource(name || url, 'url', rawText, handbook, url, sessionId, sessionName);
+      res.json({ success: true, rawId, chunks: 0, archived: true, source: name || url });
+    } else {
+      const result = await processAndIngest(rawText, name || url, handbook, 'url', url, sessionId, sessionName);
+      res.json({ success: true, ...result, source: name || url });
+    }
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.post('/api/admin/ingest-text', async (req, res) => {
   if (!authCheck(req, res)) return;
-  const { text, name, handbook = '' } = req.body;
+  const { text, name, handbook = '', archiveOnly = false, sessionId = null, sessionName = null } = req.body;
   try {
-    const result = await processAndIngest(text, name || 'Manual Text', handbook, 'text');
-    res.json({ success: true, ...result, source: name });
+    if (archiveOnly) {
+      const rawId = await saveRawSource(name || 'Manual Text', 'text', text, handbook, null, sessionId, sessionName);
+      res.json({ success: true, rawId, chunks: 0, archived: true, source: name });
+    } else {
+      const result = await processAndIngest(text, name || 'Manual Text', handbook, 'text', null, sessionId, sessionName);
+      res.json({ success: true, ...result, source: name });
+    }
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -216,10 +235,18 @@ app.post('/api/admin/ingest-pdf', upload.single('pdf'), async (req, res) => {
   try {
     const pdfParse = require('pdf-parse');
     const data = await pdfParse(req.file.buffer);
-    const name = req.body.name || req.file.originalname;
+    const name = req.body.name || req.file.originalname.replace('.pdf', '');
     const handbook = req.body.handbook || '';
-    const result = await processAndIngest(data.text, name, handbook, 'pdf');
-    res.json({ success: true, ...result, source: name });
+    const archiveOnly = req.body.archiveOnly === 'true';
+    const sessionId = req.body.sessionId || null;
+    const sessionName = req.body.sessionName || null;
+    if (archiveOnly) {
+      const rawId = await saveRawSource(name, 'pdf', data.text, handbook, null, sessionId, sessionName);
+      res.json({ success: true, rawId, chunks: 0, archived: true, source: name });
+    } else {
+      const result = await processAndIngest(data.text, name, handbook, 'pdf', null, sessionId, sessionName);
+      res.json({ success: true, ...result, source: name });
+    }
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -246,6 +273,93 @@ app.post('/api/admin/ingest-bulk', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
+// ADMIN — BULK LOAD FROM OPTIMIZED JSON
+// ══════════════════════════════════════════════════════════════════════════════
+
+app.post('/api/admin/bulk-load', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  const { chunks, sources, clearFirst = false, chunksOnly = false } = req.body;
+  if (!chunks || !Array.isArray(chunks)) return res.status(400).json({ error: 'chunks array required' });
+
+  // Respond immediately so connection doesn't timeout
+  res.json({ success: true, message: 'Bulk load started', total_chunks: chunks.length, total_sources: sources?.length || 0, chunksOnly });
+
+  // Process in background
+  (async () => {
+    try {
+      console.log(`Bulk load started: ${chunks.length} chunks, clearFirst=${clearFirst}, chunksOnly=${chunksOnly}`);
+
+      if (clearFirst) {
+        await fetch(supabaseUrl('documents?id=gt.0'), { method: 'DELETE', headers: supabaseHeaders() });
+        if (!chunksOnly) await fetch(supabaseUrl('raw_sources?id=gt.0'), { method: 'DELETE', headers: supabaseHeaders() });
+        console.log('Cleared existing data');
+      }
+
+      // Save raw sources only if NOT in chunksOnly mode
+      if (!chunksOnly && sources?.length > 0) {
+        for (const src of sources) {
+          try {
+            await supabaseInsert('raw_sources', {
+              name: src.name, source_type: src.source_type || 'pdf',
+              handbook: src.handbook || 'Medi-Cal',
+              raw_text: src.raw_text || '', metadata: src.metadata || {}
+            }, 'return=minimal');
+            await sleep(50);
+          } catch (err) { console.error(`Raw source error (${src.name}): ${err.message}`); }
+        }
+        console.log(`Saved ${sources.length} raw sources`);
+      } else if (chunksOnly) {
+        console.log('Chunks only mode — skipping raw sources save');
+      }
+
+      // Embed and store chunks with retry logic
+      let stored = 0, errors = 0;
+      for (let i = 0; i < chunks.length; i++) {
+        let success = false;
+        let attempts = 0;
+        const maxAttempts = 3;
+
+        while (!success && attempts < maxAttempts) {
+          try {
+            attempts++;
+            const embedding = await getEmbedding(chunks[i].content);
+            await supabaseInsert('documents', { content: chunks[i].content, metadata: chunks[i].metadata, embedding }, 'return=minimal');
+            stored++;
+            success = true;
+            if (stored % 25 === 0) console.log(`Progress: ${stored}/${chunks.length} chunks embedded`);
+            await sleep(400);
+          } catch (err) {
+            console.error(`Chunk ${i} attempt ${attempts} error: ${err.message}`);
+            if (attempts < maxAttempts) {
+              const waitMs = attempts * 3000;
+              console.log(`Retrying chunk ${i} in ${waitMs/1000}s...`);
+              await sleep(waitMs);
+            } else {
+              errors++;
+              console.error(`Chunk ${i} failed after ${maxAttempts} attempts — skipping`);
+            }
+          }
+        }
+      }
+      console.log(`Bulk load complete: ${stored} stored, ${errors} errors out of ${chunks.length} chunks`);
+    } catch (err) { console.error('Bulk load failed:', err.message); }
+  })();
+});
+
+// Check how many chunks are currently in DB
+app.post('/api/admin/bulk-progress', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  try {
+    const countRes = await fetch(supabaseUrl('documents?select=count'), {
+      headers: supabaseHeaders({ 'Prefer': 'count=exact', 'Range': '0-0' })
+    });
+    const countHeader = countRes.headers.get('content-range');
+    const total = countHeader ? parseInt(countHeader.split('/')[1]) : 0;
+    res.json({ chunks_in_db: total });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
 // ADMIN — DATA MANAGEMENT
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -253,16 +367,39 @@ app.post('/api/admin/ingest-bulk', async (req, res) => {
 app.post('/api/admin/list', async (req, res) => {
   if (!authCheck(req, res)) return;
   try {
-    const response = await fetch(supabaseUrl('documents?select=id,metadata&order=id.asc'), {
-      headers: supabaseHeaders()
+    // Get total count first
+    const countRes = await fetch(supabaseUrl('documents?select=count'), {
+      headers: supabaseHeaders({ 'Prefer': 'count=exact', 'Range': '0-0' })
     });
-    const docs = await response.json();
+    const countHeader = countRes.headers.get('content-range');
+    const total = countHeader ? parseInt(countHeader.split('/')[1]) : 0;
+
+    // Fetch all docs in batches of 1000
+    let allDocs = [];
+    let offset = 0;
+    const batchSize = 1000;
+    while (offset < total) {
+      const batchRes = await fetch(
+        supabaseUrl(`documents?select=id,metadata&order=id.asc&limit=${batchSize}&offset=${offset}`),
+        { headers: supabaseHeaders({ 'Range': `${offset}-${offset + batchSize - 1}` }) }
+      );
+      const batch = await batchRes.json();
+      if (!Array.isArray(batch) || batch.length === 0) break;
+      allDocs = allDocs.concat(batch);
+      offset += batchSize;
+    }
+
+    // Group by handbook then source
+    const byHandbook = {};
     const sources = {};
-    docs.forEach(d => {
+    allDocs.forEach(d => {
       const src = d.metadata?.source || 'Unknown';
+      const hb = d.metadata?.handbook || 'Unknown';
       sources[src] = (sources[src] || 0) + 1;
+      byHandbook[hb] = (byHandbook[hb] || 0) + 1;
     });
-    res.json({ total: docs.length, sources });
+
+    res.json({ total: allDocs.length, sources, byHandbook });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -270,14 +407,29 @@ app.post('/api/admin/list', async (req, res) => {
 app.post('/api/admin/raw-sources', async (req, res) => {
   if (!authCheck(req, res)) return;
   try {
-    const response = await fetch(
-      supabaseUrl('raw_sources?select=id,name,source_type,handbook,fetched_at,metadata,source_url&order=fetched_at.desc'),
-      { headers: supabaseHeaders() }
-    );
-    const data = await response.json();
-    // Fetch previews separately (first 200 chars of raw_text)
-    const withPreviews = Array.isArray(data) ? data : [];
-    res.json({ sources: withPreviews, total: withPreviews.length });
+    // Get total count
+    const countRes = await fetch(supabaseUrl('raw_sources?select=count'), {
+      headers: supabaseHeaders({ 'Prefer': 'count=exact', 'Range': '0-0' })
+    });
+    const countHeader = countRes.headers.get('content-range');
+    const total = countHeader ? parseInt(countHeader.split('/')[1]) : 0;
+
+    // Fetch all in batches
+    let allSources = [];
+    let offset = 0;
+    const batchSize = 1000;
+    while (offset < total) {
+      const batchRes = await fetch(
+        supabaseUrl(`raw_sources?select=id,name,source_type,handbook,fetched_at,metadata,source_url&order=fetched_at.desc&limit=${batchSize}&offset=${offset}`),
+        { headers: supabaseHeaders({ 'Range': `${offset}-${offset + batchSize - 1}` }) }
+      );
+      const batch = await batchRes.json();
+      if (!Array.isArray(batch) || batch.length === 0) break;
+      allSources = allSources.concat(batch);
+      offset += batchSize;
+    }
+
+    res.json({ sources: allSources, total: allSources.length });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -352,6 +504,42 @@ app.post('/api/admin/export', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Export by session ID only
+app.post('/api/admin/export-session', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  const { sessionId } = req.body;
+  if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
+  try {
+    const response = await fetch(
+      supabaseUrl(`raw_sources?session_id=eq.${encodeURIComponent(sessionId)}&select=*&order=name.asc`),
+      { headers: supabaseHeaders() }
+    );
+    const data = await response.json();
+    res.json({ export: data, total: data.length, sessionId, exported_at: new Date().toISOString() });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// List all sessions
+app.post('/api/admin/sessions', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  try {
+    const response = await fetch(
+      supabaseUrl('raw_sources?select=session_id,session_name,handbook,fetched_at&order=fetched_at.desc'),
+      { headers: supabaseHeaders() }
+    );
+    const data = await response.json();
+    // Group by session
+    const sessions = {};
+    data.forEach(item => {
+      const sid = item.session_id || 'no-session';
+      const sname = item.session_name || 'No Session';
+      if (!sessions[sid]) sessions[sid] = { sessionId: sid, sessionName: sname, handbook: item.handbook, count: 0, createdAt: item.fetched_at };
+      sessions[sid].count++;
+    });
+    res.json({ sessions: Object.values(sessions).sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt)) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ══════════════════════════════════════════════════════════════════════════════
 // ADMIN — SNAPSHOTS
 // ══════════════════════════════════════════════════════════════════════════════
@@ -361,25 +549,57 @@ app.post('/api/admin/snapshot-save', async (req, res) => {
   if (!authCheck(req, res)) return;
   const { name, description } = req.body;
   try {
-    // Get all current documents (without embeddings to save space)
-    const docsRes = await fetch(supabaseUrl('documents?select=id,content,metadata&order=id.asc'), {
-      headers: supabaseHeaders()
+    // Get total document count first
+    const countRes = await fetch(supabaseUrl('documents?select=count'), {
+      headers: supabaseHeaders({ 'Prefer': 'count=exact', 'Range': '0-0' })
     });
-    const docs = await docsRes.json();
+    const countHeader = countRes.headers.get('content-range');
+    const total = countHeader ? parseInt(countHeader.split('/')[1]) : 0;
 
-    // Get all raw sources
-    const rawRes = await fetch(supabaseUrl('raw_sources?select=*&order=id.asc'), {
-      headers: supabaseHeaders()
+    // Fetch all documents in batches of 1000
+    let allDocs = [];
+    let offset = 0;
+    const batchSize = 1000;
+    while (offset < total) {
+      const batchRes = await fetch(
+        supabaseUrl(`documents?select=id,content,metadata&order=id.asc&limit=${batchSize}&offset=${offset}`),
+        { headers: supabaseHeaders({ 'Range': `${offset}-${offset + batchSize - 1}` }) }
+      );
+      const batch = await batchRes.json();
+      if (!Array.isArray(batch) || batch.length === 0) break;
+      allDocs = allDocs.concat(batch);
+      offset += batchSize;
+      console.log(`Snapshot: fetched ${allDocs.length}/${total} documents`);
+    }
+
+    // Get all raw sources in batches too
+    const rawCountRes = await fetch(supabaseUrl('raw_sources?select=count'), {
+      headers: supabaseHeaders({ 'Prefer': 'count=exact', 'Range': '0-0' })
     });
-    const raws = await rawRes.json();
+    const rawCountHeader = rawCountRes.headers.get('content-range');
+    const rawTotal = rawCountHeader ? parseInt(rawCountHeader.split('/')[1]) : 0;
+
+    let allRaws = [];
+    let rawOffset = 0;
+    while (rawOffset < rawTotal) {
+      const rawBatch = await fetch(
+        supabaseUrl(`raw_sources?select=*&order=id.asc&limit=${batchSize}&offset=${rawOffset}`),
+        { headers: supabaseHeaders({ 'Range': `${rawOffset}-${rawOffset + batchSize - 1}` }) }
+      );
+      const batch = await rawBatch.json();
+      if (!Array.isArray(batch) || batch.length === 0) break;
+      allRaws = allRaws.concat(batch);
+      rawOffset += batchSize;
+    }
 
     await supabaseInsert('snapshots', {
       name, description,
-      chunk_count: docs.length,
-      data: { documents: docs, raw_sources: raws }
+      chunk_count: allDocs.length,
+      data: { documents: allDocs, raw_sources: allRaws }
     }, 'return=minimal');
 
-    res.json({ success: true, chunks: docs.length, sources: raws.length });
+    console.log(`Snapshot saved: ${allDocs.length} chunks, ${allRaws.length} sources`);
+    res.json({ success: true, chunks: allDocs.length, sources: allRaws.length });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -462,9 +682,11 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', supabase: !!SUPABASE_URL, anthropic: !!ANTHROPIC_API_KEY, voyage: !!VOYAGE_API_KEY });
 });
 
-app.get('/admin', (req, res) => res.sendFile('admin.html', { root: 'public' }));
-app.get('/data', (req, res) => res.sendFile('data.html', { root: 'public' }));
-app.get('/versions', (req, res) => res.sendFile('versions.html', { root: 'public' }));
+app.get('/admin', (req, res) => res.sendFile('dashboard.html', { root: 'public' }));
+app.get('/dashboard', (req, res) => res.sendFile('dashboard.html', { root: 'public' }));
+app.get('/data', (req, res) => res.sendFile('dashboard.html', { root: 'public' }));
+app.get('/versions', (req, res) => res.sendFile('dashboard.html', { root: 'public' }));
+app.get('/loader', (req, res) => res.sendFile('dashboard.html', { root: 'public' }));
 app.get('*', (req, res) => res.sendFile('index.html', { root: 'public' }));
 
 const PORT = process.env.PORT || 3000;
