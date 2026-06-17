@@ -138,15 +138,33 @@ async function processAndIngest(rawText, name, handbook, sourceType, sourceUrl =
 
 // ─── Search ────────────────────────────────────────────────────────────────
 
-async function searchHandbook(embedding) {
+async function searchHandbook(embedding, programFocus = '') {
   const url = supabaseUrl('rpc/match_documents');
+  // Pull a slightly larger pool when a focus is set, so we can softly re-rank without losing cross-program matches
+  const matchCount = programFocus ? 8 : 5;
   const response = await fetch(url, {
     method: 'POST',
     headers: supabaseHeaders(),
-    body: JSON.stringify({ query_embedding: embedding, match_threshold: 0.2, match_count: 5 })
+    body: JSON.stringify({ query_embedding: embedding, match_threshold: 0.2, match_count: matchCount })
   });
   const text = await response.text();
-  try { return JSON.parse(text); } catch { throw new Error(`Search error: ${text}`); }
+  let results;
+  try { results = JSON.parse(text); } catch { throw new Error(`Search error: ${text}`); }
+
+  if (!Array.isArray(results)) return results;
+
+  if (programFocus) {
+    // Soft boost: matching-handbook chunks get a small similarity bump for ranking purposes only.
+    // This never excludes other handbooks — it just nudges ties toward the worker's focus area.
+    const boosted = results.map(r => ({
+      ...r,
+      _rankScore: (r.similarity || 0) + (r.metadata?.handbook === programFocus ? 0.05 : 0)
+    }));
+    boosted.sort((a, b) => b._rankScore - a._rankScore);
+    return boosted.slice(0, 5);
+  }
+
+  return results.slice(0, 5);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -154,25 +172,28 @@ async function searchHandbook(embedding) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 app.post('/api/chat', async (req, res) => {
-  const { messages } = req.body;
+  const { messages, programFocus = '' } = req.body;
   if (!messages || !Array.isArray(messages)) return res.status(400).json({ error: 'Invalid request' });
 
   try {
     const question = messages[messages.length - 1].content;
     const history = messages.slice(0, -1);
     const embedding = await getEmbedding(question, 'query');
-    const chunks = await searchHandbook(embedding);
+    const chunks = await searchHandbook(embedding, programFocus);
 
-    console.log(`Q: "${question}" | Chunks: ${Array.isArray(chunks) ? chunks.length : 0} | Scores: ${Array.isArray(chunks) ? chunks.map(c => c.similarity?.toFixed(3)).join(', ') : 'none'}`);
+    console.log(`Q: "${question}" | Focus: ${programFocus || 'none'} | Chunks: ${Array.isArray(chunks) ? chunks.length : 0} | Scores: ${Array.isArray(chunks) ? chunks.map(c => c.similarity?.toFixed(3)).join(', ') : 'none'}`);
 
     const context = Array.isArray(chunks) && chunks.length > 0
       ? chunks.map((c, i) => `[Section ${i + 1}${c.metadata?.source ? ' — ' + c.metadata.source : ''}]\n${c.content}`).join('\n\n')
       : 'No relevant handbook sections found.';
 
-    const system = `You are an expert assistant for the Santa Clara County Medi-Cal Handbook (DEBS).
-Answer using ONLY the handbook sections below. If the answer is not covered, say so clearly and direct to: https://stgenssa.sccgov.org/debs/program_handbooks/medi-cal/index.htm
-Always mention which section your answer is from. Be clear and professional. Use bullet points for lists.
+    const focusNote = programFocus
+      ? `\nThe worker has indicated their primary focus area is ${programFocus}. Prioritize that lens when relevant, but still surface other program handbook content (e.g. Medi-Cal, CalWORKs) when the question involves a shared household, joint eligibility, or cross-program procedure.\n`
+      : '';
 
+    const system = `You are the DEBS Program Assistant for Santa Clara County, supporting eligibility workers across Medi-Cal, CalFresh, CalWORKs, General Relief, Foster Care, MEDS, and related Job Aids.
+Answer using ONLY the handbook sections below. If the answer is not covered, say so clearly and recommend the worker consult their program handbook directly or escalate to a supervisor.
+Always mention which section your answer is from. Be clear and professional. Use bullet points for lists.${focusNote}
 --- RELEVANT HANDBOOK SECTIONS ---
 ${context}
 --- END ---`;
