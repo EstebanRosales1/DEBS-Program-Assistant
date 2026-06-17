@@ -16,7 +16,7 @@
 
   header{background:var(--navy);padding:0 2rem;display:flex;align-items:center;justify-content:space-between;height:64px;border-bottom:2px solid var(--gold);flex-shrink:0;}
   .header-left{display:flex;align-items:center;gap:14px;}
-  .logo-badge{width:38px;height:38px;background:var(--gold);border-radius:8px;display:flex;align-items:center;justify-content:center;font-family:'DM Serif Display',serif;font-size:18px;color:var(--navy);}
+  .logo-badge{width:38px;height:38px;background:var(--gold);border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
   .header-title{font-family:'DM Serif Display',serif;font-size:1.1rem;color:var(--white);}
   .header-sub{font-size:.7rem;color:var(--gold-light);font-family:'DM Mono',monospace;letter-spacing:.05em;text-transform:uppercase;}
 
@@ -97,7 +97,18 @@
 
 <header>
   <div class="header-left">
-    <div class="logo-badge">DP</div>
+    <div class="logo-badge">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--navy)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="5" y="9" width="14" height="11" rx="2.5"/>
+        <path d="M12 9V6"/>
+        <circle cx="12" cy="4" r="1.4" fill="var(--navy)" stroke="none"/>
+        <circle cx="9" cy="14" r="1.3" fill="var(--navy)" stroke="none"/>
+        <circle cx="15" cy="14" r="1.3" fill="var(--navy)" stroke="none"/>
+        <path d="M9 17.5h6"/>
+        <path d="M3 12.5h2"/>
+        <path d="M19 12.5h2"/>
+      </svg>
+    </div>
     <div>
       <div class="header-title">DEBS Program Assistant</div>
       <div class="header-sub">Santa Clara County · DEBS</div>
@@ -108,21 +119,7 @@
 <div class="main">
   <div class="intro-card">
     <h2>Ask anything about your program handbooks</h2>
-    <p>This assistant answers questions using Santa Clara County program handbooks across Medi-Cal, CalFresh, CalWORKs, MEDS, and Job Aids. Ask about eligibility, renewals, aid codes, system procedures, and more.</p>
-
-    <div style="margin-top:1rem;">
-      <div style="font-size:.7rem;color:rgba(255,255,255,.5);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Focus Area (optional)</div>
-      <select id="program-focus" style="background:rgba(255,255,255,.08);border:1px solid rgba(201,168,76,.25);color:var(--white);border-radius:8px;padding:8px 12px;font-size:.82rem;font-family:'DM Sans',sans-serif;outline:none;max-width:240px;">
-        <option value="">All Programs</option>
-        <option value="Medi-Cal">Medi-Cal</option>
-        <option value="CalFresh">CalFresh</option>
-        <option value="CalWORKs">CalWORKs</option>
-        <option value="MEDS">MEDS</option>
-        <option value="Job Aids">Job Aids</option>
-        <option value="General Relief">General Relief</option>
-        <option value="Foster Care">Foster Care</option>
-      </select>
-    </div>
+    <p>This assistant answers questions using Santa Clara County DEBS program handbooks. Ask about eligibility, renewals, aid codes, system procedures, and more.</p>
 
     <div class="suggestions" id="suggestions">
       <button class="suggestion-chip" onclick="useSuggestion(this)">Who qualifies for Medi-Cal?</button>
@@ -147,6 +144,17 @@
 </div>
 
 <script>
+const BOT_ICON_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--gold)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="5" y="9" width="14" height="11" rx="2.5"/>
+  <path d="M12 9V6"/>
+  <circle cx="12" cy="4" r="1.4" fill="var(--gold)" stroke="none"/>
+  <circle cx="9" cy="14" r="1.3" fill="var(--gold)" stroke="none"/>
+  <circle cx="15" cy="14" r="1.3" fill="var(--gold)" stroke="none"/>
+  <path d="M9 17.5h6"/>
+  <path d="M3 12.5h2"/>
+  <path d="M19 12.5h2"/>
+</svg>`;
+
 let conversationHistory = [];
 let lastQuestion = '';
 let lastAnswer = '';
@@ -189,7 +197,11 @@ function addMessage(role, text, withRating = false) {
 
   const avatar = document.createElement('div');
   avatar.className = `avatar ${role === 'ai' ? 'ai' : 'user-av'}`;
-  avatar.textContent = role === 'ai' ? 'DP' : 'You';
+  if (role === 'ai') {
+    avatar.innerHTML = BOT_ICON_SVG;
+  } else {
+    avatar.textContent = 'You';
+  }
 
   const wrap = document.createElement('div');
   wrap.className = 'msg-wrap';
@@ -317,7 +329,7 @@ function showTyping() {
   div.id = 'typing-indicator';
   const avatar = document.createElement('div');
   avatar.className = 'avatar ai';
-  avatar.textContent = 'DP';
+  avatar.innerHTML = BOT_ICON_SVG;
   const typing = document.createElement('div');
   typing.className = 'typing';
   typing.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
@@ -348,11 +360,10 @@ async function sendMessage() {
   showTyping();
 
   try {
-    const programFocus = document.getElementById('program-focus')?.value || '';
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: conversationHistory, programFocus })
+      body: JSON.stringify({ messages: conversationHistory })
     });
 
     const data = await response.json();
