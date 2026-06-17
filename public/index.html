@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Medi-Cal Handbook Assistant</title>
+<title>DEBS Program Assistant</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
   :root {
@@ -19,7 +19,6 @@
   .logo-badge{width:38px;height:38px;background:var(--gold);border-radius:8px;display:flex;align-items:center;justify-content:center;font-family:'DM Serif Display',serif;font-size:18px;color:var(--navy);}
   .header-title{font-family:'DM Serif Display',serif;font-size:1.1rem;color:var(--white);}
   .header-sub{font-size:.7rem;color:var(--gold-light);font-family:'DM Mono',monospace;letter-spacing:.05em;text-transform:uppercase;}
-  .header-badge{font-family:'DM Mono',monospace;font-size:.65rem;color:var(--gold);border:1px solid var(--gold);padding:3px 9px;border-radius:20px;letter-spacing:.08em;text-transform:uppercase;}
 
   .main{display:flex;flex-direction:column;flex:1;max-width:900px;width:100%;margin:0 auto;padding:2rem 1.5rem;gap:1.5rem;}
 
@@ -98,24 +97,37 @@
 
 <header>
   <div class="header-left">
-    <div class="logo-badge">MC</div>
+    <div class="logo-badge">DP</div>
     <div>
-      <div class="header-title">Medi-Cal Handbook Assistant</div>
+      <div class="header-title">DEBS Program Assistant</div>
       <div class="header-sub">Santa Clara County · DEBS</div>
     </div>
   </div>
-  <div class="header-badge">AI-Powered</div>
 </header>
 
 <div class="main">
   <div class="intro-card">
-    <h2>Ask anything about your handbooks</h2>
-    <p>This assistant answers questions using Santa Clara County program handbooks including Medi-Cal, MEDS, and Job Aids. Ask about eligibility, renewals, aid codes, system procedures, and more.</p>
-    <a href="https://stgenssa.sccgov.org/debs/program_handbooks/medi-cal/index.htm" target="_blank" class="source-link">↗ stgenssa.sccgov.org · Medi-Cal Handbook</a>
+    <h2>Ask anything about your program handbooks</h2>
+    <p>This assistant answers questions using Santa Clara County program handbooks across Medi-Cal, CalFresh, CalWORKs, MEDS, and Job Aids. Ask about eligibility, renewals, aid codes, system procedures, and more.</p>
+
+    <div style="margin-top:1rem;">
+      <div style="font-size:.7rem;color:rgba(255,255,255,.5);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Focus Area (optional)</div>
+      <select id="program-focus" style="background:rgba(255,255,255,.08);border:1px solid rgba(201,168,76,.25);color:var(--white);border-radius:8px;padding:8px 12px;font-size:.82rem;font-family:'DM Sans',sans-serif;outline:none;max-width:240px;">
+        <option value="">All Programs</option>
+        <option value="Medi-Cal">Medi-Cal</option>
+        <option value="CalFresh">CalFresh</option>
+        <option value="CalWORKs">CalWORKs</option>
+        <option value="MEDS">MEDS</option>
+        <option value="Job Aids">Job Aids</option>
+        <option value="General Relief">General Relief</option>
+        <option value="Foster Care">Foster Care</option>
+      </select>
+    </div>
+
     <div class="suggestions" id="suggestions">
       <button class="suggestion-chip" onclick="useSuggestion(this)">Who qualifies for Medi-Cal?</button>
-      <button class="suggestion-chip" onclick="useSuggestion(this)">How do renewals work?</button>
-      <button class="suggestion-chip" onclick="useSuggestion(this)">What is Accelerated Enrollment?</button>
+      <button class="suggestion-chip" onclick="useSuggestion(this)">What are CalFresh income limits?</button>
+      <button class="suggestion-chip" onclick="useSuggestion(this)">How does CalWORKs Welfare-to-Work work?</button>
       <button class="suggestion-chip" onclick="useSuggestion(this)">What are e-signature rules?</button>
       <button class="suggestion-chip" onclick="useSuggestion(this)">How do I process a MEDS alert?</button>
     </div>
@@ -131,7 +143,7 @@
     </div>
   </div>
 
-  <div class="footer-note">Powered by Claude · Not a substitute for official legal or policy guidance</div>
+  <div class="footer-note">Santa Clara County DEBS · Not a substitute for official legal or policy guidance</div>
 </div>
 
 <script>
@@ -143,7 +155,7 @@ let lastChunksFound = 0;
 let lastAvgSimilarity = 0;
 
 function init() {
-  addMessage('ai', "Hello! I'm your handbook assistant for Santa Clara County DEBS. I can help with Medi-Cal eligibility, MEDS system procedures, Job Aid steps, and more. What would you like to know?");
+  addMessage('ai', "Hello! I'm the DEBS Program Assistant. I can help with Medi-Cal, CalFresh, CalWORKs, MEDS procedures, Job Aid steps, and more. What would you like to know?");
 }
 
 function useSuggestion(el) {
@@ -177,7 +189,7 @@ function addMessage(role, text, withRating = false) {
 
   const avatar = document.createElement('div');
   avatar.className = `avatar ${role === 'ai' ? 'ai' : 'user-av'}`;
-  avatar.textContent = role === 'ai' ? 'MC' : 'You';
+  avatar.textContent = role === 'ai' ? 'DP' : 'You';
 
   const wrap = document.createElement('div');
   wrap.className = 'msg-wrap';
@@ -305,7 +317,7 @@ function showTyping() {
   div.id = 'typing-indicator';
   const avatar = document.createElement('div');
   avatar.className = 'avatar ai';
-  avatar.textContent = 'MC';
+  avatar.textContent = 'DP';
   const typing = document.createElement('div');
   typing.className = 'typing';
   typing.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
@@ -336,10 +348,11 @@ async function sendMessage() {
   showTyping();
 
   try {
+    const programFocus = document.getElementById('program-focus')?.value || '';
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: conversationHistory })
+      body: JSON.stringify({ messages: conversationHistory, programFocus })
     });
 
     const data = await response.json();
