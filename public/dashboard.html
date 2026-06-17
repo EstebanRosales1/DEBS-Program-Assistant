@@ -274,7 +274,7 @@ tr:hover td{background:rgba(247,243,235,.5);}
         <div class="card full">
           <div class="card-header">
             <div class="card-icon icon-pdf">📄</div>
-            <div><div class="card-title">Upload PDF</div><div class="card-desc">Upload a single PDF — or use Archive Only mode to save without embedding (export + optimize first)</div></div>
+            <div><div class="card-title">Upload PDFs</div><div class="card-desc">Upload one or many PDFs at once — or use Archive Only mode to save without embedding (export + optimize first)</div></div>
           </div>
 
           <!-- Session Manager -->
@@ -295,28 +295,31 @@ tr:hover td{background:rgba(247,243,235,.5);}
             <div id="session-status" style="margin-top:.6rem;font-family:'DM Mono',monospace;font-size:.75rem;color:rgba(255,255,255,.5);">No active session — start one to tag uploads</div>
           </div>
 
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
-            <div>
-              <label>Document Name</label>
-              <input type="text" id="pdf-name" placeholder="e.g. MEDS Aid Code Lookup"/>
-              <label class="checkbox-label" style="margin-top:.2rem;">
-                <input type="checkbox" id="archive-only" onchange="toggleArchiveMode()"/>
-                Archive Only — save raw text, skip embedding
-              </label>
-              <div id="archive-note" style="display:none;font-size:.75rem;color:#7a5c1e;font-family:'DM Mono',monospace;background:#fff8e8;padding:8px 10px;border-radius:6px;margin-top:.4rem;">
-                ⚠️ File will be saved to archive only. Export session JSON and optimize before loading to knowledge base.
-              </div>
-            </div>
-            <div>
-              <label>PDF File</label>
-              <div class="file-drop" id="pdf-drop" onclick="document.getElementById('pdf-input').click()" ondragover="pdragOver(event)" ondragleave="pdragLeave()" ondrop="pdropFile(event)">
-                <div class="file-drop-text"><strong>Click or drag & drop</strong>PDF up to 20MB</div>
-                <div class="file-selected" id="pdf-selected"></div>
-              </div>
-              <input type="file" id="pdf-input" accept=".pdf" onchange="pdfSelected(this)"/>
-            </div>
+          <label class="checkbox-label" style="margin-bottom:.8rem;">
+            <input type="checkbox" id="archive-only" onchange="toggleArchiveMode()"/>
+            Archive Only — save raw text, skip embedding
+          </label>
+          <div id="archive-note" style="display:none;font-size:.75rem;color:#7a5c1e;font-family:'DM Mono',monospace;background:#fff8e8;padding:8px 10px;border-radius:6px;margin-bottom:.8rem;">
+            ⚠️ Files will be saved to archive only. Export session JSON and optimize before loading to knowledge base.
           </div>
-          <button class="btn" id="pdf-btn" onclick="ingestPdf()">Upload & Add to Knowledge Base</button>
+
+          <label>PDF File(s)</label>
+          <div class="file-drop" id="pdf-drop" onclick="document.getElementById('pdf-input').click()" ondragover="pdragOver(event)" ondragleave="pdragLeave()" ondrop="pdropFile(event)">
+            <div class="file-drop-text"><strong>Click or drag & drop — select multiple files at once</strong>PDFs up to 20MB each</div>
+          </div>
+          <input type="file" id="pdf-input" accept=".pdf" multiple onchange="pdfSelected(this)"/>
+
+          <!-- File queue -->
+          <div id="pdf-queue" style="display:none;margin-top:.8rem;margin-bottom:.8rem;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem;">
+              <span style="font-family:'DM Mono',monospace;font-size:.72rem;color:var(--muted);text-transform:uppercase;">Queue — <span id="pdf-queue-count">0</span> files</span>
+              <button class="abtn abtn-del" onclick="clearPdfQueue()">Clear All</button>
+            </div>
+            <div id="pdf-queue-list" style="display:flex;flex-direction:column;gap:4px;max-height:220px;overflow-y:auto;"></div>
+          </div>
+
+          <button class="btn" id="pdf-btn" onclick="ingestAllPdfs()" disabled>Select PDF files to continue</button>
+          <div class="progress-bar" id="pdf-progress-bar" style="display:none;margin-top:.6rem;"><div class="progress-fill" id="pdf-progress-fill"></div></div>
           <div class="status" id="pdf-status"></div>
         </div>
 
@@ -539,7 +542,6 @@ let loaderData = null;
 let loaderTarget = 0;
 let loaderStartTime = null;
 let loaderInterval = null;
-let selectedPdfFile = null;
 let activeSessionId = null;
 let activeSessionName = null;
 
@@ -678,54 +680,140 @@ function toggleArchiveMode() {
 }
 
 // ══════════════════════════════════════════════════════
-// ADD CONTENT — PDF
+// ADD CONTENT — PDF (MULTI-FILE QUEUE)
 // ══════════════════════════════════════════════════════
+let pdfQueue = []; // array of { file, status: 'pending'|'uploading'|'done'|'error', message }
+
 function pdragOver(e){e.preventDefault();document.getElementById('pdf-drop').classList.add('dragover');}
 function pdragLeave(){document.getElementById('pdf-drop').classList.remove('dragover');}
-function pdropFile(e){e.preventDefault();pdragLeave();selectedPdfFile=e.dataTransfer.files[0];document.getElementById('pdf-selected').textContent='Selected: '+selectedPdfFile.name;}
-function pdfSelected(input){selectedPdfFile=input.files[0];document.getElementById('pdf-selected').textContent='Selected: '+selectedPdfFile.name;}
+function pdropFile(e){
+  e.preventDefault();pdragLeave();
+  addFilesToQueue(Array.from(e.dataTransfer.files).filter(f => f.name.toLowerCase().endsWith('.pdf')));
+}
+function pdfSelected(input){
+  addFilesToQueue(Array.from(input.files));
+  input.value = ''; // allow re-selecting same files later
+}
 
-async function ingestPdf() {
-  if (!selectedPdfFile) return setStatus('pdf-status','error','Please select a PDF');
-  const name = document.getElementById('pdf-name').value.trim() || selectedPdfFile.name.replace('.pdf','');
+function addFilesToQueue(files) {
+  files.forEach(file => {
+    // Avoid exact duplicate (same name + size) already in queue
+    const dup = pdfQueue.some(item => item.file.name === file.name && item.file.size === file.size && item.status !== 'error');
+    if (!dup) pdfQueue.push({ file, status: 'pending', message: '' });
+  });
+  renderPdfQueue();
+}
+
+function renderPdfQueue() {
+  const wrap = document.getElementById('pdf-queue');
+  const list = document.getElementById('pdf-queue-list');
+  const btn = document.getElementById('pdf-btn');
+
+  if (pdfQueue.length === 0) {
+    wrap.style.display = 'none';
+    btn.disabled = true;
+    btn.textContent = 'Select PDF files to continue';
+    return;
+  }
+
+  wrap.style.display = 'block';
+  document.getElementById('pdf-queue-count').textContent = pdfQueue.length;
+
+  list.innerHTML = pdfQueue.map((item, i) => {
+    const icon = item.status === 'done' ? '✅' : item.status === 'error' ? '❌' : item.status === 'uploading' ? '⏳' : '📄';
+    const sizeKb = (item.file.size / 1024).toFixed(0);
+    const msg = item.message ? ` — ${item.message}` : '';
+    const removeBtn = item.status === 'pending'
+      ? `<button class="abtn abtn-del" onclick="removeFromQueue(${i})" style="margin-left:auto;">Remove</button>`
+      : `<span style="margin-left:auto;font-size:.7rem;color:var(--muted);font-family:'DM Mono',monospace;">${item.status}${msg}</span>`;
+    return `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--cream);border-radius:8px;font-size:.8rem;">
+      <span>${icon}</span>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${item.file.name}">${item.file.name}</span>
+      <span style="font-family:'DM Mono',monospace;font-size:.7rem;color:var(--muted);">${sizeKb} KB</span>
+      ${removeBtn}
+    </div>`;
+  }).join('');
+
+  const pendingCount = pdfQueue.filter(i => i.status === 'pending').length;
+  btn.disabled = pendingCount === 0;
+  btn.textContent = pendingCount > 0
+    ? `Upload ${pendingCount} PDF${pendingCount > 1 ? 's' : ''}`
+    : 'All files processed';
+}
+
+function removeFromQueue(index) {
+  pdfQueue.splice(index, 1);
+  renderPdfQueue();
+}
+
+function clearPdfQueue() {
+  pdfQueue = [];
+  renderPdfQueue();
+  setStatus('pdf-status', 'success', '');
+  document.getElementById('pdf-status').className = 'status';
+}
+
+async function ingestAllPdfs() {
   const handbook = document.getElementById('pdf-handbook').value.trim();
   const archiveOnly = document.getElementById('archive-only').checked;
 
-  if (!handbook) return setStatus('pdf-status','error','Please enter a handbook name');
+  if (!handbook) return setStatus('pdf-status','error','Please enter a handbook name before uploading');
+
+  const toUpload = pdfQueue.filter(item => item.status === 'pending');
+  if (toUpload.length === 0) return;
 
   document.getElementById('pdf-btn').disabled = true;
-  setStatus('pdf-status','loading', archiveOnly ? '⏳ Archiving PDF...' : '⏳ Uploading PDF...');
+  document.getElementById('pdf-progress-bar').style.display = 'block';
 
-  try {
-    const fd = new FormData();
-    fd.append('adminKey', adminKey);
-    fd.append('name', name);
-    fd.append('handbook', handbook);
-    fd.append('archiveOnly', archiveOnly ? 'true' : 'false');
-    if (activeSessionId) {
-      fd.append('sessionId', activeSessionId);
-      fd.append('sessionName', activeSessionName);
+  let completed = 0;
+  let errors = 0;
+
+  for (const item of toUpload) {
+    item.status = 'uploading';
+    renderPdfQueue();
+    setStatus('pdf-status','loading', `⏳ Uploading ${completed + 1} of ${toUpload.length}: ${item.file.name}`);
+
+    try {
+      const name = item.file.name.replace(/\.pdf$/i, '');
+      const fd = new FormData();
+      fd.append('adminKey', adminKey);
+      fd.append('name', name);
+      fd.append('handbook', handbook);
+      fd.append('archiveOnly', archiveOnly ? 'true' : 'false');
+      if (activeSessionId) {
+        fd.append('sessionId', activeSessionId);
+        fd.append('sessionName', activeSessionName);
+      }
+      fd.append('pdf', item.file);
+
+      const res = await fetch('/api/admin/ingest-pdf', { method: 'POST', body: fd });
+      const data = await res.json();
+
+      if (data.error) {
+        item.status = 'error';
+        item.message = data.error;
+        errors++;
+      } else {
+        item.status = 'done';
+        item.message = archiveOnly ? 'archived' : `${data.chunks} chunks`;
+        completed++;
+      }
+    } catch (err) {
+      item.status = 'error';
+      item.message = err.message;
+      errors++;
     }
-    fd.append('pdf', selectedPdfFile);
 
-    const res = await fetch('/api/admin/ingest-pdf', {method:'POST', body:fd});
-    const data = await res.json();
+    const pct = Math.round(((completed + errors) / toUpload.length) * 100);
+    document.getElementById('pdf-progress-fill').style.width = pct + '%';
+    renderPdfQueue();
+  }
 
-    if (data.error) {
-      setStatus('pdf-status','error','❌ '+data.error);
-    } else if (archiveOnly) {
-      setStatus('pdf-status','success',`✅ Archived "${name}" — raw text saved, not yet embedded`);
-      selectedPdfFile = null;
-      document.getElementById('pdf-selected').textContent = '';
-      document.getElementById('pdf-name').value = '';
-    } else {
-      setStatus('pdf-status','success',`✅ Added "${name}" — ${data.chunks} chunks`);
-      selectedPdfFile = null;
-      document.getElementById('pdf-selected').textContent = '';
-      document.getElementById('pdf-name').value = '';
-    }
-  } catch(err) { setStatus('pdf-status','error','❌ '+err.message); }
   document.getElementById('pdf-btn').disabled = false;
+  const summary = errors === 0
+    ? `✅ All ${completed} files uploaded successfully`
+    : `⚠️ ${completed} succeeded, ${errors} failed — see queue for details`;
+  setStatus('pdf-status', errors === 0 ? 'success' : 'error', summary);
 }
 
 // ══════════════════════════════════════════════════════
