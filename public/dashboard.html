@@ -1101,14 +1101,14 @@ async function saveSnapshot(){
   const name=document.getElementById('snap-name').value.trim();
   const desc=document.getElementById('snap-desc').value.trim();
   if(!name)return alert('Please enter a snapshot name');
-  setSaveStatus('loading','⏳ Saving snapshot...');
+  setSaveStatus('loading','⏳ Starting snapshot save...');
   try {
     const res=await fetch('/api/admin/snapshot-save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({adminKey,name,description:desc})});
     const data=await res.json();
     if(data.error)throw new Error(data.error);
-    setSaveStatus('success',`✅ Saved "${name}" — ${data.chunks} chunks`);
+    setSaveStatus('success',`✅ Snapshot "${name}" saving in background — ${data.chunks} chunks. Check Render logs for completion. Refresh this tab in ~2 minutes.`);
     document.getElementById('snap-name').value='';document.getElementById('snap-desc').value='';
-    loadVersions();
+    setTimeout(loadVersions, 15000); // auto-refresh after 15s
   } catch(err){setSaveStatus('error','❌ '+err.message);}
 }
 
