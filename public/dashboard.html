@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Admin Dashboard — Medi-Cal Chat</title>
+<title>Admin Dashboard — DEBS Program Assistant</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -197,9 +197,9 @@ tr:hover td{background:rgba(247,243,235,.5);}
 <!-- LOGIN -->
 <div class="login-wrap" id="login-wrap">
   <div class="login-box">
-    <div class="login-badge">MC</div>
+    <div class="login-badge">DP</div>
     <h1>Admin Dashboard</h1>
-    <p>MEDI-CAL HANDBOOK MANAGER</p>
+    <p>DEBS PROGRAM ASSISTANT MANAGER</p>
     <input type="password" class="login-input" id="login-key" placeholder="Enter admin password" onkeydown="if(event.key==='Enter')login()"/>
     <button class="login-btn" onclick="login()">Sign In</button>
     <div class="login-error" id="login-error"></div>
@@ -210,10 +210,10 @@ tr:hover td{background:rgba(247,243,235,.5);}
 <div class="shell" id="shell">
   <header>
     <div class="hdr-left">
-      <div class="hdr-badge">MC</div>
+      <div class="hdr-badge">DP</div>
       <div>
         <div class="hdr-title">Admin Dashboard</div>
-        <div class="hdr-sub">Medi-Cal Handbook Manager</div>
+        <div class="hdr-sub">DEBS Program Assistant Manager</div>
       </div>
     </div>
     <div class="hdr-right">
@@ -487,7 +487,7 @@ tr:hover td{background:rgba(247,243,235,.5);}
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
           <div>
             <div style="font-family:'DM Serif Display',serif;font-size:1rem;color:var(--navy);">⏳ Pending Review</div>
-            <div style="font-size:.78rem;color:var(--muted);margin-top:2px;">AI-suggested improvements waiting for your approval before being added to the knowledge base</div>
+            <div style="font-size:.78rem;color:var(--muted);margin-top:2px;">Suggested improvements waiting for your approval before being added to the knowledge base</div>
           </div>
         </div>
         <div id="pending-list"><div class="empty-state">No pending suggestions</div></div>
@@ -1101,14 +1101,14 @@ async function saveSnapshot(){
   const name=document.getElementById('snap-name').value.trim();
   const desc=document.getElementById('snap-desc').value.trim();
   if(!name)return alert('Please enter a snapshot name');
-  setSaveStatus('loading','⏳ Saving snapshot...');
+  setSaveStatus('loading','⏳ Starting snapshot save...');
   try {
     const res=await fetch('/api/admin/snapshot-save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({adminKey,name,description:desc})});
     const data=await res.json();
     if(data.error)throw new Error(data.error);
-    setSaveStatus('success',`✅ Saved "${name}" — ${data.chunks} chunks`);
+    setSaveStatus('success',`✅ Snapshot "${name}" saving in background — ${data.chunks} chunks. Check Render logs for completion. Refresh this tab in ~2 minutes.`);
     document.getElementById('snap-name').value='';document.getElementById('snap-desc').value='';
-    loadVersions();
+    setTimeout(loadVersions, 15000); // auto-refresh after 15s
   } catch(err){setSaveStatus('error','❌ '+err.message);}
 }
 

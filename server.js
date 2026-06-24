@@ -138,15 +138,33 @@ async function processAndIngest(rawText, name, handbook, sourceType, sourceUrl =
 
 // ─── Search ────────────────────────────────────────────────────────────────
 
-async function searchHandbook(embedding) {
+async function searchHandbook(embedding, programFocus = '') {
   const url = supabaseUrl('rpc/match_documents');
+  // Pull a slightly larger pool when a focus is set, so we can softly re-rank without losing cross-program matches
+  const matchCount = programFocus ? 8 : 5;
   const response = await fetch(url, {
     method: 'POST',
     headers: supabaseHeaders(),
-    body: JSON.stringify({ query_embedding: embedding, match_threshold: 0.2, match_count: 5 })
+    body: JSON.stringify({ query_embedding: embedding, match_threshold: 0.2, match_count: matchCount })
   });
   const text = await response.text();
-  try { return JSON.parse(text); } catch { throw new Error(`Search error: ${text}`); }
+  let results;
+  try { results = JSON.parse(text); } catch { throw new Error(`Search error: ${text}`); }
+
+  if (!Array.isArray(results)) return results;
+
+  if (programFocus) {
+    // Soft boost: matching-handbook chunks get a small similarity bump for ranking purposes only.
+    // This never excludes other handbooks — it just nudges ties toward the worker's focus area.
+    const boosted = results.map(r => ({
+      ...r,
+      _rankScore: (r.similarity || 0) + (r.metadata?.handbook === programFocus ? 0.05 : 0)
+    }));
+    boosted.sort((a, b) => b._rankScore - a._rankScore);
+    return boosted.slice(0, 5);
+  }
+
+  return results.slice(0, 5);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -154,25 +172,28 @@ async function searchHandbook(embedding) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 app.post('/api/chat', async (req, res) => {
-  const { messages } = req.body;
+  const { messages, programFocus = '' } = req.body;
   if (!messages || !Array.isArray(messages)) return res.status(400).json({ error: 'Invalid request' });
 
   try {
     const question = messages[messages.length - 1].content;
     const history = messages.slice(0, -1);
     const embedding = await getEmbedding(question, 'query');
-    const chunks = await searchHandbook(embedding);
+    const chunks = await searchHandbook(embedding, programFocus);
 
-    console.log(`Q: "${question}" | Chunks: ${Array.isArray(chunks) ? chunks.length : 0} | Scores: ${Array.isArray(chunks) ? chunks.map(c => c.similarity?.toFixed(3)).join(', ') : 'none'}`);
+    console.log(`Q: "${question}" | Focus: ${programFocus || 'none'} | Chunks: ${Array.isArray(chunks) ? chunks.length : 0} | Scores: ${Array.isArray(chunks) ? chunks.map(c => c.similarity?.toFixed(3)).join(', ') : 'none'}`);
 
     const context = Array.isArray(chunks) && chunks.length > 0
       ? chunks.map((c, i) => `[Section ${i + 1}${c.metadata?.source ? ' — ' + c.metadata.source : ''}]\n${c.content}`).join('\n\n')
       : 'No relevant handbook sections found.';
 
-    const system = `You are an expert assistant for the Santa Clara County Medi-Cal Handbook (DEBS).
-Answer using ONLY the handbook sections below. If the answer is not covered, say so clearly and direct to: https://stgenssa.sccgov.org/debs/program_handbooks/medi-cal/index.htm
-Always mention which section your answer is from. Be clear and professional. Use bullet points for lists.
+    const focusNote = programFocus
+      ? `\nThe worker has indicated their primary focus area is ${programFocus}. Prioritize that lens when relevant, but still surface other program handbook content (e.g. Medi-Cal, CalWORKs) when the question involves a shared household, joint eligibility, or cross-program procedure.\n`
+      : '';
 
+    const system = `You are the DEBS Program Assistant for Santa Clara County, supporting eligibility workers across Medi-Cal, CalFresh, CalWORKs, General Relief, Foster Care, MEDS, and related Job Aids.
+Answer using ONLY the handbook sections below. If the answer is not covered, say so clearly and recommend the worker consult their program handbook directly or escalate to a supervisor.
+Always mention which section your answer is from. Be clear and professional. Use bullet points for lists.${focusNote}
 --- RELEVANT HANDBOOK SECTIONS ---
 ${context}
 --- END ---`;
@@ -563,61 +584,77 @@ app.post('/api/admin/snapshot-save', async (req, res) => {
   if (!authCheck(req, res)) return;
   const { name, description } = req.body;
   try {
-    // Get total document count first
+    // Get total document count
     const countRes = await fetch(supabaseUrl('documents?select=count'), {
       headers: supabaseHeaders({ 'Prefer': 'count=exact', 'Range': '0-0' })
     });
     const countHeader = countRes.headers.get('content-range');
     const total = countHeader ? parseInt(countHeader.split('/')[1]) : 0;
 
-    // Fetch all documents in batches of 1000
-    let allDocs = [];
-    let offset = 0;
-    const batchSize = 1000;
-    while (offset < total) {
-      const batchRes = await fetch(
-        supabaseUrl(`documents?select=id,content,metadata&order=id.asc&limit=${batchSize}&offset=${offset}`),
-        { headers: supabaseHeaders({ 'Range': `${offset}-${offset + batchSize - 1}` }) }
-      );
-      const batch = await batchRes.json();
-      if (!Array.isArray(batch) || batch.length === 0) break;
-      allDocs = allDocs.concat(batch);
-      offset += batchSize;
-      console.log(`Snapshot: fetched ${allDocs.length}/${total} documents`);
-    }
+    // Respond immediately so connection doesn't timeout
+    res.json({ success: true, chunks: total, message: 'Snapshot saving in background...' });
 
-    // Get all raw sources in batches too
-    const rawCountRes = await fetch(supabaseUrl('raw_sources?select=count'), {
-      headers: supabaseHeaders({ 'Prefer': 'count=exact', 'Range': '0-0' })
-    });
-    const rawCountHeader = rawCountRes.headers.get('content-range');
-    const rawTotal = rawCountHeader ? parseInt(rawCountHeader.split('/')[1]) : 0;
+    // Save in background
+    (async () => {
+      try {
+        const batchSize = 500;
+        let allDocs = [];
+        let offset = 0;
 
-    let allRaws = [];
-    let rawOffset = 0;
-    while (rawOffset < rawTotal) {
-      const rawBatch = await fetch(
-        supabaseUrl(`raw_sources?select=*&order=id.asc&limit=${batchSize}&offset=${rawOffset}`),
-        { headers: supabaseHeaders({ 'Range': `${rawOffset}-${rawOffset + batchSize - 1}` }) }
-      );
-      const batch = await rawBatch.json();
-      if (!Array.isArray(batch) || batch.length === 0) break;
-      allRaws = allRaws.concat(batch);
-      rawOffset += batchSize;
-    }
+        // Fetch all docs in batches
+        while (offset < total) {
+          const batchRes = await fetch(
+            supabaseUrl(`documents?select=id,content,metadata&order=id.asc&limit=${batchSize}&offset=${offset}`),
+            { headers: supabaseHeaders({ 'Range': `${offset}-${offset + batchSize - 1}` }) }
+          );
+          const batch = await batchRes.json();
+          if (!Array.isArray(batch) || batch.length === 0) break;
+          allDocs = allDocs.concat(batch);
+          offset += batchSize;
+          console.log(`Snapshot fetch: ${allDocs.length}/${total} docs`);
+        }
 
-    await supabaseInsert('snapshots', {
-      name, description,
-      chunk_count: allDocs.length,
-      data: { documents: allDocs, raw_sources: allRaws }
-    }, 'return=minimal');
+        // Save snapshot in chunks of 500 docs per row to avoid blob size limit
+        // First row stores metadata + first batch, additional rows store overflow
+        const chunkBatchSize = 500;
+        const batches = [];
+        for (let i = 0; i < allDocs.length; i += chunkBatchSize) {
+          batches.push(allDocs.slice(i, i + chunkBatchSize));
+        }
 
-    console.log(`Snapshot saved: ${allDocs.length} chunks, ${allRaws.length} sources`);
-    res.json({ success: true, chunks: allDocs.length, sources: allRaws.length });
+        // Save first row with metadata
+        const firstRow = await supabaseInsert('snapshots', {
+          name,
+          description: description || null,
+          chunk_count: allDocs.length,
+          data: { documents: batches[0] || [], batch: 0, total_batches: batches.length }
+        }, 'return=representation');
+
+        const snapshotId = firstRow?.[0]?.id;
+        console.log(`Snapshot row 1/${batches.length} saved (id: ${snapshotId})`);
+
+        // Save remaining batches as continuation rows
+        for (let b = 1; b < batches.length; b++) {
+          await supabaseInsert('snapshots', {
+            name: `${name} [part ${b + 1}]`,
+            description: `Continuation of snapshot: ${snapshotId}`,
+            chunk_count: 0,
+            data: { documents: batches[b], batch: b, total_batches: batches.length, parent_id: snapshotId }
+          }, 'return=minimal');
+          console.log(`Snapshot row ${b + 1}/${batches.length} saved`);
+          await sleep(200);
+        }
+
+        console.log(`✅ Snapshot "${name}" complete: ${allDocs.length} chunks across ${batches.length} rows`);
+      } catch (err) {
+        console.error(`Snapshot background save failed: ${err.message}`);
+      }
+    })();
+
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// List snapshots
+// List snapshots — only show parent rows (not continuation parts)
 app.post('/api/admin/snapshot-list', async (req, res) => {
   if (!authCheck(req, res)) return;
   try {
@@ -626,53 +663,68 @@ app.post('/api/admin/snapshot-list', async (req, res) => {
       { headers: supabaseHeaders() }
     );
     const data = await response.json();
-    res.json({ snapshots: data });
+    // Filter out continuation rows (they have chunk_count=0 and name contains "[part")
+    const parents = Array.isArray(data) ? data.filter(s => !s.name.includes('[part ')) : [];
+    res.json({ snapshots: parents });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Restore snapshot
+// Restore snapshot — handles multi-row snapshots
 app.post('/api/admin/snapshot-restore', async (req, res) => {
   if (!authCheck(req, res)) return;
   const { id } = req.body;
   try {
-    // Get snapshot data
+    // Get the parent snapshot row
     const snapRes = await fetch(supabaseUrl(`snapshots?id=eq.${id}&select=*`), {
       headers: supabaseHeaders()
     });
     const snaps = await snapRes.json();
     if (!snaps[0]) return res.status(404).json({ error: 'Snapshot not found' });
+    const snap = snaps[0];
 
-    const { documents, raw_sources } = snaps[0].data;
+    // Collect all documents from parent + any continuation rows
+    let allDocuments = snap.data?.documents || [];
+    const totalBatches = snap.data?.total_batches || 1;
 
-    // Clear current data immediately
-    await fetch(supabaseUrl('documents?id=gt.0'), { method: 'DELETE', headers: supabaseHeaders() });
-    await fetch(supabaseUrl('raw_sources?id=gt.0'), { method: 'DELETE', headers: supabaseHeaders() });
-
-    // Restore raw sources (no embeddings needed — fast)
-    if (raw_sources?.length > 0) {
-      for (const src of raw_sources) {
-        const { id: _, ...srcData } = src;
-        await supabaseInsert('raw_sources', srcData, 'return=minimal');
-        await sleep(50);
+    if (totalBatches > 1) {
+      // Fetch continuation rows by parent_id
+      const partsRes = await fetch(
+        supabaseUrl(`snapshots?select=*&order=created_at.asc`),
+        { headers: supabaseHeaders() }
+      );
+      const allRows = await partsRes.json();
+      const parts = Array.isArray(allRows)
+        ? allRows.filter(r => r.data?.parent_id === id && r.data?.batch > 0)
+            .sort((a, b) => a.data.batch - b.data.batch)
+        : [];
+      for (const part of parts) {
+        allDocuments = allDocuments.concat(part.data?.documents || []);
       }
+      console.log(`Restore: assembled ${allDocuments.length} docs from ${parts.length + 1} rows`);
     }
 
-    // Respond immediately so Render doesn't timeout
-    // Re-embedding happens in background
-    res.json({ success: true, total: documents.length, sources: raw_sources?.length || 0, message: 'Restore started — re-embedding in background. Check /data in a few minutes.' });
+    // Clear current documents
+    await fetch(supabaseUrl('documents?id=gt.0'), { method: 'DELETE', headers: supabaseHeaders() });
 
-    // Re-embed documents in background after response
+    // Respond immediately
+    res.json({ success: true, total: allDocuments.length, message: 'Restore started — re-embedding in background. Check Knowledge Base tab in a few minutes.' });
+
+    // Re-embed all documents in background
     (async () => {
-      for (const doc of documents) {
+      let restored = 0;
+      for (const doc of allDocuments) {
         try {
           const embedding = await getEmbedding(doc.content);
           await supabaseInsert('documents', { content: doc.content, metadata: doc.metadata, embedding }, 'return=minimal');
-          await sleep(200);
+          restored++;
+          if (restored % 50 === 0) console.log(`Restore progress: ${restored}/${allDocuments.length}`);
+          await sleep(400);
         } catch (err) {
           console.error('Restore re-embed error:', err.message);
+          await sleep(1000);
         }
       }
-      console.log(`Snapshot restore complete: ${documents.length} chunks re-embedded`);
+      console.log(`✅ Snapshot restore complete: ${restored} chunks re-embedded`);
     })();
 
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -683,7 +735,19 @@ app.post('/api/admin/snapshot-delete', async (req, res) => {
   if (!authCheck(req, res)) return;
   const { id } = req.body;
   try {
+    // Delete the parent row
     await fetch(supabaseUrl(`snapshots?id=eq.${id}`), { method: 'DELETE', headers: supabaseHeaders() });
+    // Delete any continuation rows that reference this parent
+    // They store parent_id inside the data jsonb field — filter by name pattern as a safety net
+    const allRes = await fetch(supabaseUrl('snapshots?select=id,name,data'), { headers: supabaseHeaders() });
+    const all = await allRes.json();
+    if (Array.isArray(all)) {
+      const parts = all.filter(r => r.data?.parent_id === id);
+      for (const part of parts) {
+        await fetch(supabaseUrl(`snapshots?id=eq.${part.id}`), { method: 'DELETE', headers: supabaseHeaders() });
+      }
+      if (parts.length > 0) console.log(`Deleted ${parts.length} continuation rows for snapshot ${id}`);
+    }
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

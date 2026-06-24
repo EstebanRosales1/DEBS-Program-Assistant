@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Medi-Cal Handbook Assistant</title>
+<title>DEBS Program Assistant</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
   :root {
@@ -16,10 +16,9 @@
 
   header{background:var(--navy);padding:0 2rem;display:flex;align-items:center;justify-content:space-between;height:64px;border-bottom:2px solid var(--gold);flex-shrink:0;}
   .header-left{display:flex;align-items:center;gap:14px;}
-  .logo-badge{width:38px;height:38px;background:var(--gold);border-radius:8px;display:flex;align-items:center;justify-content:center;font-family:'DM Serif Display',serif;font-size:18px;color:var(--navy);}
+  .logo-badge{width:38px;height:38px;background:var(--gold);border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
   .header-title{font-family:'DM Serif Display',serif;font-size:1.1rem;color:var(--white);}
   .header-sub{font-size:.7rem;color:var(--gold-light);font-family:'DM Mono',monospace;letter-spacing:.05em;text-transform:uppercase;}
-  .header-badge{font-family:'DM Mono',monospace;font-size:.65rem;color:var(--gold);border:1px solid var(--gold);padding:3px 9px;border-radius:20px;letter-spacing:.08em;text-transform:uppercase;}
 
   .main{display:flex;flex-direction:column;flex:1;max-width:900px;width:100%;margin:0 auto;padding:2rem 1.5rem;gap:1.5rem;}
 
@@ -98,24 +97,34 @@
 
 <header>
   <div class="header-left">
-    <div class="logo-badge">MC</div>
+    <div class="logo-badge">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--navy)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="5" y="9" width="14" height="11" rx="2.5"/>
+        <path d="M12 9V6"/>
+        <circle cx="12" cy="4" r="1.4" fill="var(--navy)" stroke="none"/>
+        <circle cx="9" cy="14" r="1.3" fill="var(--navy)" stroke="none"/>
+        <circle cx="15" cy="14" r="1.3" fill="var(--navy)" stroke="none"/>
+        <path d="M9 17.5h6"/>
+        <path d="M3 12.5h2"/>
+        <path d="M19 12.5h2"/>
+      </svg>
+    </div>
     <div>
-      <div class="header-title">Medi-Cal Handbook Assistant</div>
+      <div class="header-title">DEBS Program Assistant</div>
       <div class="header-sub">Santa Clara County · DEBS</div>
     </div>
   </div>
-  <div class="header-badge">AI-Powered</div>
 </header>
 
 <div class="main">
   <div class="intro-card">
-    <h2>Ask anything about your handbooks</h2>
-    <p>This assistant answers questions using Santa Clara County program handbooks including Medi-Cal, MEDS, and Job Aids. Ask about eligibility, renewals, aid codes, system procedures, and more.</p>
-    <a href="https://stgenssa.sccgov.org/debs/program_handbooks/medi-cal/index.htm" target="_blank" class="source-link">↗ stgenssa.sccgov.org · Medi-Cal Handbook</a>
+    <h2>Ask anything about your program handbooks</h2>
+    <p>This assistant answers questions using Santa Clara County DEBS program handbooks. Ask about eligibility, renewals, aid codes, system procedures, and more.</p>
+
     <div class="suggestions" id="suggestions">
       <button class="suggestion-chip" onclick="useSuggestion(this)">Who qualifies for Medi-Cal?</button>
-      <button class="suggestion-chip" onclick="useSuggestion(this)">How do renewals work?</button>
-      <button class="suggestion-chip" onclick="useSuggestion(this)">What is Accelerated Enrollment?</button>
+      <button class="suggestion-chip" onclick="useSuggestion(this)">What are CalFresh income limits?</button>
+      <button class="suggestion-chip" onclick="useSuggestion(this)">How does CalWORKs Welfare-to-Work work?</button>
       <button class="suggestion-chip" onclick="useSuggestion(this)">What are e-signature rules?</button>
       <button class="suggestion-chip" onclick="useSuggestion(this)">How do I process a MEDS alert?</button>
     </div>
@@ -131,10 +140,21 @@
     </div>
   </div>
 
-  <div class="footer-note">Powered by Claude · Not a substitute for official legal or policy guidance</div>
+  <div class="footer-note">Santa Clara County DEBS · Not a substitute for official legal or policy guidance</div>
 </div>
 
 <script>
+const BOT_ICON_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--gold)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="5" y="9" width="14" height="11" rx="2.5"/>
+  <path d="M12 9V6"/>
+  <circle cx="12" cy="4" r="1.4" fill="var(--gold)" stroke="none"/>
+  <circle cx="9" cy="14" r="1.3" fill="var(--gold)" stroke="none"/>
+  <circle cx="15" cy="14" r="1.3" fill="var(--gold)" stroke="none"/>
+  <path d="M9 17.5h6"/>
+  <path d="M3 12.5h2"/>
+  <path d="M19 12.5h2"/>
+</svg>`;
+
 let conversationHistory = [];
 let lastQuestion = '';
 let lastAnswer = '';
@@ -143,7 +163,7 @@ let lastChunksFound = 0;
 let lastAvgSimilarity = 0;
 
 function init() {
-  addMessage('ai', "Hello! I'm your handbook assistant for Santa Clara County DEBS. I can help with Medi-Cal eligibility, MEDS system procedures, Job Aid steps, and more. What would you like to know?");
+  addMessage('ai', "Hello! I'm the DEBS Program Assistant. I can help with Medi-Cal, CalFresh, CalWORKs, MEDS procedures, Job Aid steps, and more. What would you like to know?");
 }
 
 function useSuggestion(el) {
@@ -177,7 +197,11 @@ function addMessage(role, text, withRating = false) {
 
   const avatar = document.createElement('div');
   avatar.className = `avatar ${role === 'ai' ? 'ai' : 'user-av'}`;
-  avatar.textContent = role === 'ai' ? 'MC' : 'You';
+  if (role === 'ai') {
+    avatar.innerHTML = BOT_ICON_SVG;
+  } else {
+    avatar.textContent = 'You';
+  }
 
   const wrap = document.createElement('div');
   wrap.className = 'msg-wrap';
@@ -305,7 +329,7 @@ function showTyping() {
   div.id = 'typing-indicator';
   const avatar = document.createElement('div');
   avatar.className = 'avatar ai';
-  avatar.textContent = 'MC';
+  avatar.innerHTML = BOT_ICON_SVG;
   const typing = document.createElement('div');
   typing.className = 'typing';
   typing.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
