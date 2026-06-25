@@ -136,6 +136,9 @@ async function getJob(jobId) {
 // Embeds chunks in parallel batches with job tracking
 // If jobId provided, updates progress in Supabase so dashboard can poll it
 // startFrom allows resuming from a specific chunk index
+const EMBED_BATCH_SIZE = 4;
+const EMBED_BATCH_DELAY = 300;
+
 async function embedAndStoreChunks(chunks, progressLabel = '', jobId = null, startFrom = 0) {
   let stored = 0;
   let errors = 0;
@@ -1647,7 +1650,7 @@ app.post('/api/admin/rebuild-from-archive', async (req, res) => {
 
     } catch (err) {
       console.error(`\n❌ OPTIMIZATION FAILED: ${err.message}`);
-      console.error(`   DB state: old chunks were${allChunks?.length > 0 ? ' already deleted — restore from snapshot' : ' NOT deleted — DB unchanged'}`);
+      console.error(`   Restore from snapshot if chunks are missing`);
     }
   })();
 });
