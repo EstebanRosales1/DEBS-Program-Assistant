@@ -804,7 +804,54 @@ async function previewOptimization() {
 }
 
 async function runOptimization() {
-  setStatus('opt-status', 'loading', '⏳ Run coming in next step...');
+  const handbook = document.getElementById('opt-handbook').value;
+  const config = getOptConfig();
+
+  // Get current chunk count for the confirm dialog
+  let currentChunks = '?';
+  try {
+    const kbData = await apiFetch('/api/admin/list', {});
+    currentChunks = (kbData.byHandbook?.[handbook] || 0).toLocaleString();
+  } catch(e) {}
+
+  if (!confirm(
+    '⚠️ OPTIMIZATION SCOPE\n\n' +
+    'Handbook:         ' + handbook + '\n' +
+    'Chunks to replace: ' + currentChunks + '\n' +
+    'Chunk size:       ' + config.chunkSize + 'w / ' + config.chunkOverlap + 'w overlap\n' +
+    'Intro style:      ' + config.introStyle + '\n\n' +
+    'SAFE SEQUENCE:\n' +
+    '1. Generate ALL new chunks (no DB changes yet)\n' +
+    '2. Delete old ' + handbook + ' chunks only\n' +
+    '3. Insert new chunks immediately\n\n' +
+    'Only ' + handbook + ' is affected. All other handbooks stay untouched.\n\n' +
+    'Have you saved a snapshot? Click OK to proceed.'
+  )) return;
+
+  document.getElementById('opt-run-btn').disabled = true;
+  setStatus('opt-status', 'loading', '⏳ Starting optimization of ' + handbook + '...');
+
+  try {
+    const res = await fetch('/api/admin/optimize/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminKey, handbook, config })
+    });
+    const text = await res.text();
+    if (text.trim().startsWith('<')) throw new Error('Server error — check Render logs');
+    const data = JSON.parse(text);
+    if (data.error) throw new Error(data.error);
+
+    setStatus('opt-status', 'success',
+      '✅ Optimization started — ' + data.totalSources + ' sources processing in background.\n' +
+      'Phase 1 (generate chunks) runs first — no DB changes until all chunks are ready.\n' +
+      'Check Knowledge Base tab in a few minutes for updated count.'
+    );
+  } catch(err) {
+    setStatus('opt-status', 'error', '❌ ' + err.message);
+  }
+
+  document.getElementById('opt-run-btn').disabled = false;
 }
 
 // ══════════════════════════════════════════════════════
