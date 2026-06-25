@@ -764,14 +764,43 @@ function loadPreset(key) {
 function getOptConfig() {
   return {
     chunkSize: parseInt(document.getElementById('opt-chunk-size').value),
-    overlap: parseInt(document.getElementById('opt-overlap').value),
-    minWords: parseInt(document.getElementById('opt-min-words').value),
-    intro: document.querySelector('input[name="opt-intro"]:checked')?.value || 'generic'
+    chunkOverlap: parseInt(document.getElementById('opt-overlap').value),
+    minChunkWords: parseInt(document.getElementById('opt-min-words').value),
+    introStyle: document.querySelector('input[name="opt-intro"]:checked')?.value || 'generic',
+    removePageNumbers: true,
+    removeHeaders: true,
+    collapseWhitespace: true,
+    removeShortLinesEnabled: false,
+    removeShortLinesMin: 5
   };
 }
 
 async function previewOptimization() {
-  setStatus('opt-status', 'loading', '⏳ Preview coming in next step...');
+  const handbook = document.getElementById('opt-handbook').value;
+  const config = getOptConfig();
+  setStatus('opt-status', 'loading', '⏳ Generating preview...');
+  try {
+    const res = await fetch('/api/admin/optimize/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminKey, handbook, config })
+    });
+    const text = await res.text();
+    if (text.trim().startsWith('<')) throw new Error('Server error — check Render logs');
+    const data = JSON.parse(text);
+    if (data.error) throw new Error(data.error);
+
+    // Show preview card
+    document.getElementById('prev-sources').textContent = data.totalSources?.toLocaleString() || '—';
+    document.getElementById('prev-chunks').textContent = data.estimatedChunks?.toLocaleString() || '—';
+    document.getElementById('prev-avg').textContent = data.avgWordsPerChunk ? data.avgWordsPerChunk + 'w' : '—';
+    document.getElementById('prev-sample').textContent = data.sampleChunk?.preview || 'No sample available';
+    document.getElementById('prev-source-name').textContent = data.sampleChunk?.source ? 'Source: ' + data.sampleChunk.source : '';
+    document.getElementById('opt-preview-card').style.display = 'block';
+    document.getElementById('opt-status').className = 'status';
+  } catch(err) {
+    setStatus('opt-status', 'error', '❌ ' + err.message);
+  }
 }
 
 async function runOptimization() {
