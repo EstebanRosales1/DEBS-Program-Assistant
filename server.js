@@ -94,7 +94,103 @@ async function getEmbedding(text, inputType = 'document') {
   return data.data[0].embedding;
 }
 
-// ─── Core ingestion ────────────────────────────────────────────────────────
+// ─── Parallel batch embedding ──────────────────────────────────────────────
+// ─── Resumable job system ──────────────────────────────────────────────────
+// Jobs are tracked in Supabase so they survive Render restarts
+// Job types: 'bulk-load', 'optimize', 'restore'
+
+async function createJob(type, label, totalChunks, meta = {}) {
+  const result = await supabaseInsert('embed_jobs', {
+    type, label, status: 'running',
+    total_chunks: totalChunks,
+    stored_chunks: 0,
+    error_chunks: 0,
+    meta,
+    started_at: new Date().toISOString()
+  }, 'return=representation');
+  return result[0].id;
+}
+
+async function updateJob(jobId, stored, errors, status = 'running') {
+  await fetch(supabaseUrl(`embed_jobs?id=eq.${jobId}`), {
+    method: 'PATCH',
+    headers: supabaseHeaders({ 'Prefer': 'return=minimal' }),
+    body: JSON.stringify({
+      stored_chunks: stored,
+      error_chunks: errors,
+      status,
+      updated_at: new Date().toISOString(),
+      ...(status !== 'running' ? { completed_at: new Date().toISOString() } : {})
+    })
+  });
+}
+
+async function getJob(jobId) {
+  const res = await fetch(supabaseUrl(`embed_jobs?id=eq.${jobId}&select=*`), {
+    headers: supabaseHeaders()
+  });
+  const data = await res.json();
+  return data[0] || null;
+}
+
+// Embeds chunks in parallel batches with job tracking
+// If jobId provided, updates progress in Supabase so dashboard can poll it
+// startFrom allows resuming from a specific chunk index
+async function embedAndStoreChunks(chunks, progressLabel = '', jobId = null, startFrom = 0) {
+  let stored = 0;
+  let errors = 0;
+  const total = chunks.length;
+  const effectiveChunks = chunks.slice(startFrom);
+
+  console.log(`${progressLabel} Starting embed: ${effectiveChunks.length} chunks (${startFrom > 0 ? `resuming from ${startFrom}` : 'fresh start'})`);
+
+  for (let i = 0; i < effectiveChunks.length; i += EMBED_BATCH_SIZE) {
+    const batch = effectiveChunks.slice(i, i + EMBED_BATCH_SIZE);
+
+    const results = await Promise.allSettled(
+      batch.map(async (chunk) => {
+        let attempts = 0;
+        while (attempts < 3) {
+          try {
+            attempts++;
+            const embedding = await getEmbedding(chunk.content);
+            await supabaseInsert('documents', {
+              content: chunk.content,
+              metadata: chunk.metadata,
+              embedding
+            }, 'return=minimal');
+            return true;
+          } catch (err) {
+            if (attempts < 3) await sleep(attempts * 2000);
+            else throw err;
+          }
+        }
+      })
+    );
+
+    results.forEach((r, idx) => {
+      if (r.status === 'fulfilled') stored++;
+      else {
+        errors++;
+        console.error(`${progressLabel} Embed error (chunk ${startFrom + i + idx}): ${r.reason?.message}`);
+      }
+    });
+
+    // Update job progress in Supabase every 4 batches (~16 chunks)
+    if (jobId && (i % (EMBED_BATCH_SIZE * 4) === 0 || i + EMBED_BATCH_SIZE >= effectiveChunks.length)) {
+      await updateJob(jobId, startFrom + stored, errors).catch(() => {});
+    }
+
+    if ((startFrom + stored) % 100 === 0 || i + EMBED_BATCH_SIZE >= effectiveChunks.length) {
+      console.log(`${progressLabel} Progress: ${startFrom + stored}/${total} chunks${errors > 0 ? ` (${errors} errors)` : ''}`);
+    }
+
+    if (i + EMBED_BATCH_SIZE < effectiveChunks.length) await sleep(EMBED_BATCH_DELAY);
+  }
+
+  if (jobId) await updateJob(jobId, startFrom + stored, errors, errors === 0 ? 'complete' : 'complete_with_errors').catch(() => {});
+  return { stored: startFrom + stored, errors };
+}
 
 async function saveRawSource(name, sourceType, rawText, handbook, sourceUrl = null, sessionId = null, sessionName = null) {
   const result = await supabaseInsert('raw_sources', {
@@ -107,25 +203,10 @@ async function saveRawSource(name, sourceType, rawText, handbook, sourceUrl = nu
   return result[0].id;
 }
 
+// ─── Core ingestion ────────────────────────────────────────────────────────
+
 async function ingestChunks(chunks) {
-  let stored = 0;
-  for (const chunk of chunks) {
-    let success = false;
-    let attempts = 0;
-    while (!success && attempts < 3) {
-      try {
-        attempts++;
-        const embedding = await getEmbedding(chunk.content);
-        await supabaseInsert('documents', { content: chunk.content, metadata: chunk.metadata, embedding }, 'return=minimal');
-        stored++;
-        success = true;
-        await sleep(400);
-      } catch (err) {
-        if (attempts < 3) await sleep(attempts * 2000);
-        else throw err;
-      }
-    }
-  }
+  const { stored } = await embedAndStoreChunks(chunks, '[ingest]');
   return stored;
 }
 
@@ -316,13 +397,19 @@ app.post('/api/admin/bulk-load', async (req, res) => {
   const { chunks, sources, clearFirst = false, chunksOnly = false } = req.body;
   if (!chunks || !Array.isArray(chunks)) return res.status(400).json({ error: 'chunks array required' });
 
-  // Respond immediately so connection doesn't timeout
-  res.json({ success: true, message: 'Bulk load started', total_chunks: chunks.length, total_sources: sources?.length || 0, chunksOnly });
+  // Create a job record immediately for tracking and resumability
+  let jobId = null;
+  try {
+    jobId = await createJob('bulk-load', `Bulk load — ${chunks.length} chunks`, chunks.length, { chunks, clearFirst, chunksOnly });
+  } catch (err) { console.error('Job create failed:', err.message); }
+
+  // Respond immediately
+  res.json({ success: true, message: 'Bulk load started', total_chunks: chunks.length, total_sources: sources?.length || 0, chunksOnly, jobId });
 
   // Process in background
   (async () => {
     try {
-      console.log(`Bulk load started: ${chunks.length} chunks, clearFirst=${clearFirst}, chunksOnly=${chunksOnly}`);
+      console.log(`Bulk load started: ${chunks.length} chunks, clearFirst=${clearFirst}, chunksOnly=${chunksOnly}, jobId=${jobId}`);
 
       if (clearFirst) {
         await fetch(supabaseUrl('documents?id=gt.0'), { method: 'DELETE', headers: supabaseHeaders() });
@@ -347,50 +434,81 @@ app.post('/api/admin/bulk-load', async (req, res) => {
         console.log('Chunks only mode — skipping raw sources save');
       }
 
-      // Embed and store chunks with retry logic
-      let stored = 0, errors = 0;
-      for (let i = 0; i < chunks.length; i++) {
-        let success = false;
-        let attempts = 0;
-        const maxAttempts = 3;
-
-        while (!success && attempts < maxAttempts) {
-          try {
-            attempts++;
-            const embedding = await getEmbedding(chunks[i].content);
-            await supabaseInsert('documents', { content: chunks[i].content, metadata: chunks[i].metadata, embedding }, 'return=minimal');
-            stored++;
-            success = true;
-            if (stored % 25 === 0) console.log(`Progress: ${stored}/${chunks.length} chunks embedded`);
-            await sleep(400);
-          } catch (err) {
-            console.error(`Chunk ${i} attempt ${attempts} error: ${err.message}`);
-            if (attempts < maxAttempts) {
-              const waitMs = attempts * 3000;
-              console.log(`Retrying chunk ${i} in ${waitMs/1000}s...`);
-              await sleep(waitMs);
-            } else {
-              errors++;
-              console.error(`Chunk ${i} failed after ${maxAttempts} attempts — skipping`);
-            }
-          }
-        }
-      }
+      // Embed and store chunks with job tracking
+      const { stored, errors } = await embedAndStoreChunks(chunks, '[bulk-load]', jobId);
       console.log(`Bulk load complete: ${stored} stored, ${errors} errors out of ${chunks.length} chunks`);
-    } catch (err) { console.error('Bulk load failed:', err.message); }
+    } catch (err) {
+      console.error('Bulk load failed:', err.message);
+      if (jobId) await updateJob(jobId, 0, 0, 'failed').catch(() => {});
+    }
   })();
 });
 
-// Check how many chunks are currently in DB
+// Check job progress (used by bulk loader polling)
 app.post('/api/admin/bulk-progress', async (req, res) => {
   if (!authCheck(req, res)) return;
   try {
+    const { jobId } = req.body;
+    // If jobId provided use job tracking, otherwise fall back to counting docs
+    if (jobId) {
+      const job = await getJob(jobId);
+      if (job) return res.json({ chunks_in_db: job.stored_chunks, status: job.status, total: job.total_chunks, jobId });
+    }
+    // Fallback: count all documents
     const countRes = await fetch(supabaseUrl('documents?select=count'), {
       headers: supabaseHeaders({ 'Prefer': 'count=exact', 'Range': '0-0' })
     });
     const countHeader = countRes.headers.get('content-range');
     const total = countHeader ? parseInt(countHeader.split('/')[1]) : 0;
     res.json({ chunks_in_db: total });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Check job progress
+app.post('/api/admin/job-progress', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  const { jobId } = req.body;
+  try {
+    if (jobId) {
+      const job = await getJob(jobId);
+      return res.json({ job });
+    }
+    // Return all recent jobs
+    const response = await fetch(
+      supabaseUrl('embed_jobs?select=*&order=started_at.desc&limit=10'),
+      { headers: supabaseHeaders() }
+    );
+    const jobs = await response.json();
+    res.json({ jobs: Array.isArray(jobs) ? jobs : [] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Resume a failed/interrupted bulk load job
+app.post('/api/admin/resume-job', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  const { jobId } = req.body;
+  try {
+    const job = await getJob(jobId);
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+    if (job.status === 'complete') return res.json({ success: true, message: 'Job already complete' });
+
+    const chunks = job.meta?.chunks;
+    if (!chunks || !Array.isArray(chunks)) return res.status(400).json({ error: 'Job has no chunk data to resume' });
+
+    const startFrom = job.stored_chunks || 0;
+    res.json({ success: true, message: `Resuming from chunk ${startFrom}`, totalChunks: chunks.length, startFrom });
+
+    await updateJob(jobId, startFrom, job.error_chunks || 0, 'running');
+
+    (async () => {
+      try {
+        const { stored, errors } = await embedAndStoreChunks(chunks, `[resume-${jobId}]`, jobId, startFrom);
+        console.log(`Resume complete: ${stored}/${chunks.length} chunks stored, ${errors} errors`);
+      } catch (err) {
+        console.error(`Resume failed: ${err.message}`);
+        await updateJob(jobId, job.stored_chunks, job.error_chunks, 'failed');
+      }
+    })();
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -435,6 +553,44 @@ app.post('/api/admin/list', async (req, res) => {
     });
 
     res.json({ total: allDocs.length, sources, byHandbook });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Lightweight archive summary — grouped by handbook (no raw_text fetched)
+app.post('/api/admin/archive-summary', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  try {
+    // Fetch just handbook + metadata without raw_text for speed
+    const countRes = await fetch(supabaseUrl('raw_sources?select=count'), {
+      headers: supabaseHeaders({ 'Prefer': 'count=exact', 'Range': '0-0' })
+    });
+    const total = parseInt(countRes.headers.get('content-range')?.split('/')[1] || '0');
+
+    // Fetch in batches — only lightweight fields, no raw_text
+    let allSources = [];
+    let offset = 0;
+    while (offset < total) {
+      const batchRes = await fetch(
+        supabaseUrl(`raw_sources?select=handbook,metadata&order=handbook.asc&limit=1000&offset=${offset}`),
+        { headers: supabaseHeaders({ 'Range': `${offset}-${offset + 999}` }) }
+      );
+      const batch = await batchRes.json();
+      if (!Array.isArray(batch) || batch.length === 0) break;
+      allSources = allSources.concat(batch);
+      offset += 1000;
+    }
+
+    // Group by handbook
+    const grouped = {};
+    allSources.forEach(s => {
+      const hb = s.handbook || 'Unknown';
+      if (!grouped[hb]) grouped[hb] = { handbook: hb, sources: 0, total_chars: 0 };
+      grouped[hb].sources++;
+      grouped[hb].total_chars += s.metadata?.char_count || 0;
+    });
+
+    const summary = Object.values(grouped).sort((a, b) => a.handbook.localeCompare(b.handbook));
+    res.json({ summary, total });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -531,11 +687,29 @@ app.post('/api/admin/delete-source', async (req, res) => {
 app.post('/api/admin/export', async (req, res) => {
   if (!authCheck(req, res)) return;
   try {
-    const response = await fetch(supabaseUrl('raw_sources?select=*&order=handbook.asc,name.asc'), {
-      headers: supabaseHeaders()
+    // Get total count first
+    const countRes = await fetch(supabaseUrl('raw_sources?select=count'), {
+      headers: supabaseHeaders({ 'Prefer': 'count=exact', 'Range': '0-0' })
     });
-    const data = await response.json();
-    res.json({ export: data, total: data.length, exported_at: new Date().toISOString() });
+    const total = parseInt(countRes.headers.get('content-range')?.split('/')[1] || '0');
+
+    // Fetch all in batches of 500
+    let allSources = [];
+    let offset = 0;
+    const batchSize = 500;
+    while (offset < total) {
+      const batchRes = await fetch(
+        supabaseUrl(`raw_sources?select=*&order=handbook.asc,name.asc&limit=${batchSize}&offset=${offset}`),
+        { headers: supabaseHeaders({ 'Range': `${offset}-${offset + batchSize - 1}` }) }
+      );
+      const batch = await batchRes.json();
+      if (!Array.isArray(batch) || batch.length === 0) break;
+      allSources = allSources.concat(batch);
+      offset += batchSize;
+      console.log(`Export: fetched ${allSources.length}/${total} sources`);
+    }
+
+    res.json({ export: allSources, total: allSources.length, exported_at: new Date().toISOString() });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -558,14 +732,28 @@ app.post('/api/admin/export-session', async (req, res) => {
 app.post('/api/admin/sessions', async (req, res) => {
   if (!authCheck(req, res)) return;
   try {
-    const response = await fetch(
-      supabaseUrl('raw_sources?select=session_id,session_name,handbook,fetched_at&order=fetched_at.desc'),
-      { headers: supabaseHeaders() }
-    );
-    const data = await response.json();
-    // Group by session
+    // Get count first
+    const countRes = await fetch(supabaseUrl('raw_sources?select=count'), {
+      headers: supabaseHeaders({ 'Prefer': 'count=exact', 'Range': '0-0' })
+    });
+    const total = parseInt(countRes.headers.get('content-range')?.split('/')[1] || '0');
+
+    // Fetch lightweight fields only in batches
+    let allRows = [];
+    let offset = 0;
+    while (offset < total) {
+      const batchRes = await fetch(
+        supabaseUrl(`raw_sources?select=session_id,session_name,handbook,fetched_at&order=fetched_at.desc&limit=500&offset=${offset}`),
+        { headers: supabaseHeaders({ 'Range': `${offset}-${offset + 499}` }) }
+      );
+      const batch = await batchRes.json();
+      if (!Array.isArray(batch) || batch.length === 0) break;
+      allRows = allRows.concat(batch);
+      offset += 500;
+    }
+
     const sessions = {};
-    data.forEach(item => {
+    allRows.forEach(item => {
       const sid = item.session_id || 'no-session';
       const sname = item.session_name || 'No Session';
       if (!sessions[sid]) sessions[sid] = { sessionId: sid, sessionName: sname, handbook: item.handbook, count: 0, createdAt: item.fetched_at };
@@ -669,7 +857,7 @@ app.post('/api/admin/snapshot-list', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Restore snapshot — handles multi-row snapshots
+// Restore snapshot — handles multi-row snapshots with parallel batch embedding
 app.post('/api/admin/snapshot-restore', async (req, res) => {
   if (!authCheck(req, res)) return;
   const { id } = req.body;
@@ -682,16 +870,14 @@ app.post('/api/admin/snapshot-restore', async (req, res) => {
     if (!snaps[0]) return res.status(404).json({ error: 'Snapshot not found' });
     const snap = snaps[0];
 
-    // Collect all documents from parent + any continuation rows
+    // Collect all documents from parent + continuation rows
     let allDocuments = snap.data?.documents || [];
     const totalBatches = snap.data?.total_batches || 1;
 
     if (totalBatches > 1) {
-      // Fetch continuation rows by parent_id
-      const partsRes = await fetch(
-        supabaseUrl(`snapshots?select=*&order=created_at.asc`),
-        { headers: supabaseHeaders() }
-      );
+      const partsRes = await fetch(supabaseUrl(`snapshots?select=*&order=created_at.asc`), {
+        headers: supabaseHeaders()
+      });
       const allRows = await partsRes.json();
       const parts = Array.isArray(allRows)
         ? allRows.filter(r => r.data?.parent_id === id && r.data?.batch > 0)
@@ -703,28 +889,47 @@ app.post('/api/admin/snapshot-restore', async (req, res) => {
       console.log(`Restore: assembled ${allDocuments.length} docs from ${parts.length + 1} rows`);
     }
 
+    if (allDocuments.length === 0) return res.status(400).json({ error: 'Snapshot contains no documents' });
+
     // Clear current documents
     await fetch(supabaseUrl('documents?id=gt.0'), { method: 'DELETE', headers: supabaseHeaders() });
+    console.log(`Restore: cleared existing documents, starting re-embed of ${allDocuments.length} chunks`);
 
     // Respond immediately
-    res.json({ success: true, total: allDocuments.length, message: 'Restore started — re-embedding in background. Check Knowledge Base tab in a few minutes.' });
+    res.json({ success: true, total: allDocuments.length, message: `Restore started — ${allDocuments.length} chunks re-embedding in background using parallel batches.` });
 
-    // Re-embed all documents in background
+    // Re-embed in background using parallel batch embedding
     (async () => {
       let restored = 0;
-      for (const doc of allDocuments) {
-        try {
-          const embedding = await getEmbedding(doc.content);
-          await supabaseInsert('documents', { content: doc.content, metadata: doc.metadata, embedding }, 'return=minimal');
-          restored++;
-          if (restored % 50 === 0) console.log(`Restore progress: ${restored}/${allDocuments.length}`);
-          await sleep(400);
-        } catch (err) {
-          console.error('Restore re-embed error:', err.message);
-          await sleep(1000);
+      let errors = 0;
+      const BATCH = 4;
+      const DELAY = 300;
+
+      for (let i = 0; i < allDocuments.length; i += BATCH) {
+        const batch = allDocuments.slice(i, i + BATCH);
+        const results = await Promise.allSettled(
+          batch.map(async (doc) => {
+            let attempts = 0;
+            while (attempts < 3) {
+              try {
+                attempts++;
+                const embedding = await getEmbedding(doc.content);
+                await supabaseInsert('documents', { content: doc.content, metadata: doc.metadata, embedding }, 'return=minimal');
+                return true;
+              } catch (err) {
+                if (attempts < 3) await sleep(attempts * 2000);
+                else throw err;
+              }
+            }
+          })
+        );
+        results.forEach(r => r.status === 'fulfilled' ? restored++ : errors++);
+        if (restored % 100 === 0 || i + BATCH >= allDocuments.length) {
+          console.log(`Restore progress: ${restored}/${allDocuments.length} chunks`);
         }
+        if (i + BATCH < allDocuments.length) await sleep(DELAY);
       }
-      console.log(`✅ Snapshot restore complete: ${restored} chunks re-embedded`);
+      console.log(`✅ Restore complete: ${restored} chunks re-embedded, ${errors} errors`);
     })();
 
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -1007,13 +1212,445 @@ app.post('/api/admin/delete-rating', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+// ROUTES
+// ══════════════════════════════════════════════════════════════════════════════
+
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', supabase: !!SUPABASE_URL, anthropic: !!ANTHROPIC_API_KEY, voyage: !!VOYAGE_API_KEY });
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ROUTES
+// OPTIMIZATION ENGINE
 // ══════════════════════════════════════════════════════════════════════════════
+
+// ─── Optimization helpers ──────────────────────────────────────────────────
+
+function removePdfNoise(text) {
+  return text
+    .replace(/Page \d+ of \d+/gi, '')
+    .replace(/^\d+\s*$/gm, '')
+    .replace(/^.{0,60}(County|DEBS|Confidential|Internal Use|Santa Clara).{0,60}$/gm, '')
+    .replace(/^(Previous|Next|Home|Back|Top|Table of Contents)\s*$/gmi, '')
+    .replace(/_{3,}/g, '')
+    .replace(/─{3,}/g, '')
+    .replace(/={3,}/g, '')
+    .replace(/\t+/g, ' ')
+    .replace(/ {3,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function removeShortLines(text, minWords = 5) {
+  return text.split('\n').filter(line => {
+    const words = line.trim().split(/\s+/).filter(w => w.length > 0);
+    return words.length === 0 || words.length >= minWords;
+  }).join('\n');
+}
+
+function buildChunks(text, sourceName, handbook, category, chunkSize, chunkOverlap, minChunkWords) {
+  const words = text.split(/\s+/).filter(w => w.length > 0);
+  const chunks = [];
+  let i = 0;
+  while (i < words.length) {
+    const content = words.slice(i, i + chunkSize).join(' ');
+    const wordCount = content.split(/\s+/).length;
+    if (wordCount >= minChunkWords) {
+      chunks.push({
+        content,
+        metadata: {
+          source: sourceName,
+          handbook,
+          category: category || handbook,
+          chunkIndex: chunks.length,
+          totalChunks: 0
+        }
+      });
+    }
+    i += chunkSize - chunkOverlap;
+  }
+  chunks.forEach(c => c.metadata.totalChunks = chunks.length);
+  return chunks;
+}
+
+function buildGenericIntro(sourceName, handbook) {
+  const topic = sourceName.includes(' — ') ? sourceName.split(' — ').slice(1).join(' — ').trim() : sourceName;
+  const cat = sourceName.includes(' — ') ? sourceName.split(' — ')[0].trim() : handbook;
+  return `This section covers ${topic} as part of the ${cat} category in the Santa Clara County ${handbook} handbook.\n\n`;
+}
+
+async function buildQuestionIntro(sourceName, handbook, sampleText) {
+  try {
+    const prompt = `Given this handbook section name and content sample, write 2-3 specific questions that a Santa Clara County eligibility worker would ask that this section directly answers. Be specific to the actual content.
+
+Section: ${sourceName}
+Handbook: ${handbook}
+Content sample: ${sampleText.substring(0, 400)}
+
+Respond with only the questions on one line separated by " | ". No preamble, no numbering, no extra text.`;
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 150,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+    const data = await response.json();
+    if (data.error || !data.content?.[0]) return buildGenericIntro(sourceName, handbook);
+    const questions = data.content[0].text.trim();
+    return `Workers commonly ask: ${questions}\n\n`;
+  } catch (err) {
+    console.error(`Question intro failed for "${sourceName}": ${err.message}`);
+    return buildGenericIntro(sourceName, handbook);
+  }
+}
+
+async function runOptimizationPipeline(sources, config, progressCallback) {
+  const {
+    chunkSize = 300,
+    chunkOverlap = 50,
+    minChunkWords = 30,
+    introStyle = 'question',
+    customTemplate = '',
+    removePageNumbers = true,
+    removeHeaders = true,
+    collapseWhitespace = true,
+    removeShortLinesEnabled = false,
+    removeShortLinesMin = 5
+  } = config;
+
+  const allChunks = [];
+  let processed = 0;
+
+  for (const source of sources) {
+    let text = source.raw_text || '';
+
+    // Apply noise removal
+    if (removePageNumbers || removeHeaders || collapseWhitespace) {
+      text = removePdfNoise(text);
+    }
+    if (removeShortLinesEnabled) {
+      text = removeShortLines(text, removeShortLinesMin);
+    }
+
+    if (!text.trim() || text.split(/\s+/).length < minChunkWords) {
+      processed++;
+      if (progressCallback) progressCallback(processed, sources.length, source.name, 0);
+      continue;
+    }
+
+    // Build intro
+    let intro = '';
+    if (introStyle === 'generic') {
+      intro = buildGenericIntro(source.name, source.handbook);
+    } else if (introStyle === 'question') {
+      intro = await buildQuestionIntro(source.name, source.handbook, text);
+      await sleep(200); // avoid Claude rate limits
+    } else if (introStyle === 'custom' && customTemplate) {
+      const topic = source.name.includes(' — ') ? source.name.split(' — ').slice(1).join(' — ').trim() : source.name;
+      intro = customTemplate.replace('{topic}', topic).replace('{handbook}', source.handbook).replace('{source}', source.name) + '\n\n';
+    }
+
+    const enriched = intro + text;
+    const chunks = buildChunks(enriched, source.name, source.handbook, source.metadata?.category || source.handbook, chunkSize, chunkOverlap, minChunkWords);
+    allChunks.push(...chunks);
+
+    processed++;
+    if (progressCallback) progressCallback(processed, sources.length, source.name, chunks.length);
+  }
+
+  return allChunks;
+}
+
+// ─── Strategy endpoints ─────────────────────────────────────────────────────
+
+// List strategies
+app.post('/api/admin/strategies', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  try {
+    const response = await fetch(supabaseUrl('optimization_strategies?select=*&order=created_at.desc'), {
+      headers: supabaseHeaders()
+    });
+    const data = await response.json();
+    res.json({ strategies: Array.isArray(data) ? data : [] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Save strategy
+app.post('/api/admin/strategies/save', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  const { name, handbook, config } = req.body;
+  if (!name || !config) return res.status(400).json({ error: 'name and config required' });
+  try {
+    const result = await supabaseInsert('optimization_strategies', { name, handbook: handbook || null, config }, 'return=representation');
+    res.json({ success: true, strategy: result[0] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Update strategy
+app.post('/api/admin/strategies/update', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  const { id, name, handbook, config } = req.body;
+  if (!id) return res.status(400).json({ error: 'id required' });
+  try {
+    await fetch(supabaseUrl(`optimization_strategies?id=eq.${id}`), {
+      method: 'PATCH',
+      headers: supabaseHeaders({ 'Prefer': 'return=minimal' }),
+      body: JSON.stringify({ name, handbook: handbook || null, config })
+    });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Delete strategy
+app.post('/api/admin/strategies/delete', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  const { id } = req.body;
+  try {
+    await fetch(supabaseUrl(`optimization_strategies?id=eq.${id}`), { method: 'DELETE', headers: supabaseHeaders() });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Preview optimization (no DB changes)
+app.post('/api/admin/optimize/preview', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  const { handbook, config } = req.body;
+  if (!handbook || !config) return res.status(400).json({ error: 'handbook and config required' });
+  try {
+    // Fetch a sample of sources (first 5) for preview
+    const response = await fetch(
+      supabaseUrl(`raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=id,name,handbook,raw_text,metadata&limit=5`),
+      { headers: supabaseHeaders() }
+    );
+    const sources = await response.json();
+    if (!Array.isArray(sources) || sources.length === 0) return res.status(404).json({ error: `No sources found for handbook: ${handbook}` });
+
+    // Get total source count
+    const countRes = await fetch(
+      supabaseUrl(`raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=count`),
+      { headers: supabaseHeaders({ 'Prefer': 'count=exact', 'Range': '0-0' }) }
+    );
+    const countHeader = countRes.headers.get('content-range');
+    const totalSources = countHeader ? parseInt(countHeader.split('/')[1]) : sources.length;
+
+    // Run optimization on sample only (no Claude calls for preview speed)
+    const previewConfig = { ...config, introStyle: config.introStyle === 'question' ? 'generic' : config.introStyle };
+    const sampleChunks = await runOptimizationPipeline(sources, previewConfig, null);
+
+    // Estimate total chunks
+    const avgChunksPerSource = sampleChunks.length / sources.length;
+    const estimatedTotal = Math.round(avgChunksPerSource * totalSources);
+
+    // Build sample preview
+    const sampleChunk = sampleChunks[0];
+    const wordCounts = sampleChunks.map(c => c.content.split(/\s+/).length);
+    const avgWords = wordCounts.length > 0 ? Math.round(wordCounts.reduce((a, b) => a + b, 0) / wordCounts.length) : 0;
+
+    res.json({
+      totalSources,
+      estimatedChunks: estimatedTotal,
+      sampleChunksGenerated: sampleChunks.length,
+      avgWordsPerChunk: avgWords,
+      minWords: wordCounts.length > 0 ? Math.min(...wordCounts) : 0,
+      maxWords: wordCounts.length > 0 ? Math.max(...wordCounts) : 0,
+      sampleChunk: sampleChunk ? { source: sampleChunk.metadata.source, preview: sampleChunk.content.substring(0, 400) } : null
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Run full optimization — safe sequence: generate all → delete old → insert new
+app.post('/api/admin/optimize/run', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  const { handbook, config, strategyId } = req.body;
+  if (!handbook || !config) return res.status(400).json({ error: 'handbook and config required' });
+
+  // Get current chunk count for confirmation info
+  const currentCountRes = await fetch(
+    supabaseUrl(`documents?select=count&metadata->>handbook=eq.${encodeURIComponent(handbook)}`),
+    { headers: supabaseHeaders({ 'Prefer': 'count=exact', 'Range': '0-0' }) }
+  );
+  const currentChunks = parseInt(currentCountRes.headers.get('content-range')?.split('/')[1] || '0');
+
+  // Get source count
+  const countRes = await fetch(
+    supabaseUrl(`raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=count`),
+    { headers: supabaseHeaders({ 'Prefer': 'count=exact', 'Range': '0-0' }) }
+  );
+  const totalSources = parseInt(countRes.headers.get('content-range')?.split('/')[1] || '0');
+
+  if (totalSources === 0) return res.status(404).json({ error: `No raw sources found for handbook: ${handbook}` });
+
+  // Respond immediately with full scope info
+  res.json({ success: true, message: 'Optimization started', totalSources, currentChunks, handbook });
+
+  // Run in background — SAFE SEQUENCE: generate all → delete → insert
+  (async () => {
+    try {
+      console.log(`\n🔧 OPTIMIZATION START: ${handbook}`);
+      console.log(`   Sources: ${totalSources} | Current chunks: ${currentChunks}`);
+      console.log(`   Config: ${config.chunkSize}w/${config.chunkOverlap}o overlap | intro=${config.introStyle}`);
+
+      // ── PHASE 1: Fetch all raw sources ─────────────────────────────────────
+      let allSources = [];
+      let offset = 0;
+      const batchSize = 200;
+      while (offset < totalSources) {
+        const batchRes = await fetch(
+          supabaseUrl(`raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=id,name,handbook,raw_text,metadata&order=name.asc&limit=${batchSize}&offset=${offset}`),
+          { headers: supabaseHeaders({ 'Range': `${offset}-${offset + batchSize - 1}` }) }
+        );
+        const batch = await batchRes.json();
+        if (!Array.isArray(batch) || batch.length === 0) break;
+        allSources = allSources.concat(batch);
+        offset += batchSize;
+      }
+      console.log(`📥 Fetched ${allSources.length} sources`);
+
+      // ── PHASE 2: Generate ALL optimized chunks (no DB changes yet) ──────────
+      console.log(`⚙️  Generating optimized chunks...`);
+      const allChunks = await runOptimizationPipeline(allSources, config, (done, total, name, chunkCount) => {
+        if (done % 25 === 0 || done === total) {
+          console.log(`   Pipeline: ${done}/${total} sources | "${name}" → ${chunkCount} chunks`);
+        }
+      });
+      console.log(`✅ Generated ${allChunks.length} optimized chunks from ${allSources.length} sources`);
+
+      if (allChunks.length === 0) {
+        console.error('❌ Optimization aborted — zero chunks generated. Raw sources may be empty. DB unchanged.');
+        return;
+      }
+
+      // ── PHASE 3: Delete old chunks NOW (after generation succeeds) ──────────
+      console.log(`🗑️  Deleting ${currentChunks} old ${handbook} chunks...`);
+      await fetch(
+        supabaseUrl(`documents?metadata->>handbook=eq.${encodeURIComponent(handbook)}`),
+        { method: 'DELETE', headers: supabaseHeaders() }
+      );
+      console.log(`   Old chunks deleted`);
+
+      // ── PHASE 4: Embed and insert new chunks immediately ────────────────────
+      console.log(`📤 Embedding and inserting ${allChunks.length} new chunks...`);
+      const { stored, errors } = await embedAndStoreChunks(allChunks, '[optimize]');
+
+      // Rebuild handbook from raw_sources archive — no JSON needed
+// This is the primary recovery and optimization path
+app.post('/api/admin/rebuild-from-archive', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  const { handbook, config, clearFirst = true } = req.body;
+  if (!handbook) return res.status(400).json({ error: 'handbook required' });
+
+  // Use default config if none provided
+  const effectiveConfig = config || {
+    chunkSize: 300, chunkOverlap: 50, minChunkWords: 30,
+    introStyle: 'generic', removePageNumbers: true,
+    removeHeaders: true, collapseWhitespace: true,
+    removeShortLinesEnabled: false, removeShortLinesMin: 5
+  };
+
+  // Get source count
+  const countRes = await fetch(
+    supabaseUrl(`raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=count`),
+    { headers: supabaseHeaders({ 'Prefer': 'count=exact', 'Range': '0-0' }) }
+  );
+  const totalSources = parseInt(countRes.headers.get('content-range')?.split('/')[1] || '0');
+  if (totalSources === 0) return res.status(404).json({ error: `No raw sources found for: ${handbook}` });
+
+  // Get current chunk count
+  const curCountRes = await fetch(
+    supabaseUrl(`documents?select=count&metadata->>handbook=eq.${encodeURIComponent(handbook)}`),
+    { headers: supabaseHeaders({ 'Prefer': 'count=exact', 'Range': '0-0' }) }
+  );
+  const currentChunks = parseInt(curCountRes.headers.get('content-range')?.split('/')[1] || '0');
+
+  // Create job for tracking
+  let jobId = null;
+  try {
+    jobId = await createJob('rebuild', `Rebuild ${handbook} from archive`, totalSources * 3, { handbook, config: effectiveConfig });
+  } catch (err) { console.error('Job create failed:', err.message); }
+
+  res.json({ success: true, message: `Rebuild started for ${handbook}`, totalSources, currentChunks, jobId });
+
+  // Run in background
+  (async () => {
+    try {
+      console.log(`\n🔄 REBUILD FROM ARCHIVE: ${handbook}`);
+      console.log(`   Sources: ${totalSources} | Current chunks: ${currentChunks}`);
+
+      // ── PHASE 1: Fetch all raw sources in batches ───────────────────────────
+      let allSources = [];
+      let offset = 0;
+      const batchSize = 200;
+      while (offset < totalSources) {
+        const batchRes = await fetch(
+          supabaseUrl(`raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=id,name,handbook,raw_text,metadata&order=name.asc&limit=${batchSize}&offset=${offset}`),
+          { headers: supabaseHeaders({ 'Range': `${offset}-${offset + batchSize - 1}` }) }
+        );
+        const batch = await batchRes.json();
+        if (!Array.isArray(batch) || batch.length === 0) break;
+        allSources = allSources.concat(batch);
+        offset += batchSize;
+        console.log(`   Fetched ${allSources.length}/${totalSources} sources`);
+      }
+
+      // ── PHASE 2: Generate optimized chunks ─────────────────────────────────
+      console.log(`⚙️  Generating chunks (${effectiveConfig.chunkSize}w/${effectiveConfig.chunkOverlap}o, intro=${effectiveConfig.introStyle})...`);
+      const allChunks = await runOptimizationPipeline(allSources, effectiveConfig, (done, total, name, chunkCount) => {
+        if (done % 50 === 0 || done === total) console.log(`   Pipeline: ${done}/${total} | "${name}" → ${chunkCount} chunks`);
+      });
+      console.log(`✅ Generated ${allChunks.length} chunks from ${allSources.length} sources`);
+
+      if (allChunks.length === 0) {
+        console.error('❌ Rebuild aborted — zero chunks generated. DB unchanged.');
+        if (jobId) await updateJob(jobId, 0, 0, 'failed');
+        return;
+      }
+
+      // ── PHASE 3: Delete existing chunks for this handbook (if requested) ────
+      if (clearFirst) {
+        console.log(`🗑️  Clearing existing ${handbook} chunks...`);
+        await fetch(
+          supabaseUrl(`documents?metadata->>handbook=eq.${encodeURIComponent(handbook)}`),
+          { method: 'DELETE', headers: supabaseHeaders() }
+        );
+        console.log(`   Done`);
+      }
+
+      // ── PHASE 4: Embed and store new chunks ─────────────────────────────────
+      console.log(`📤 Embedding ${allChunks.length} chunks...`);
+      const { stored, errors } = await embedAndStoreChunks(allChunks, `[rebuild-${handbook}]`, jobId);
+
+      console.log(`\n✅ REBUILD COMPLETE: ${handbook}`);
+      console.log(`   ${stored} chunks stored | ${errors} errors`);
+      if (errors > 0) console.log(`   ⚠️  Re-run to fill ${errors} missing chunks`);
+
+    } catch (err) {
+      console.error(`❌ REBUILD FAILED: ${err.message}`);
+      if (jobId) await updateJob(jobId, 0, 0, 'failed');
+    }
+  })();
+});
+      if (strategyId) {
+        await fetch(supabaseUrl(`optimization_strategies?id=eq.${strategyId}`), {
+          method: 'PATCH',
+          headers: supabaseHeaders({ 'Prefer': 'return=minimal' }),
+          body: JSON.stringify({ last_run: new Date().toISOString(), last_run_chunks: stored })
+        });
+      }
+
+      // ── PHASE 5: Update strategy last_run ──────────────────────────────────
+      console.log(`   Old chunks: ${currentChunks} → New chunks: ${stored} | Errors: ${errors}`);
+      if (errors > 0) console.log(`   ⚠️  ${errors} chunks failed to embed — re-run to fill gaps`);
+
+    } catch (err) {
+      console.error(`\n❌ OPTIMIZATION FAILED: ${err.message}`);
+      console.error(`   DB state: old chunks were${allChunks?.length > 0 ? ' already deleted — restore from snapshot' : ' NOT deleted — DB unchanged'}`);
+    }
+  })();
+});
 app.get('/admin', (req, res) => res.sendFile('dashboard.html', { root: 'public' }));
 app.get('/dashboard', (req, res) => res.sendFile('dashboard.html', { root: 'public' }));
 app.get('/data', (req, res) => res.sendFile('dashboard.html', { root: 'public' }));
