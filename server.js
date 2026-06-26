@@ -1231,13 +1231,22 @@ app.get('/api/health', (req, res) => {
 
 function removePdfNoise(text) {
   return text
+    // Page numbers
     .replace(/Page \d+ of \d+/gi, '')
     .replace(/^\d+\s*$/gm, '')
+    // County/DEBS headers
     .replace(/^.{0,60}(County|DEBS|Confidential|Internal Use|Santa Clara).{0,60}$/gm, '')
-    .replace(/^(Previous|Next|Home|Back|Top|Table of Contents)\s*$/gmi, '')
+    // Navigation text
+    .replace(/^(Previous|Next|Home|Back|Top|Table of Contents|Skip to|Jump to|Print|Share|Email|Download)\s*.*$/gmi, '')
+    // URL-like text
+    .replace(/https?:\/\/\S+/g, '')
+    // Repeated punctuation dividers
     .replace(/_{3,}/g, '')
     .replace(/─{3,}/g, '')
     .replace(/={3,}/g, '')
+    .replace(/\*{3,}/g, '')
+    .replace(/-{5,}/g, '')
+    // Whitespace cleanup
     .replace(/\t+/g, ' ')
     .replace(/ {3,}/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
@@ -1249,6 +1258,133 @@ function removeShortLines(text, minWords = 5) {
     const words = line.trim().split(/\s+/).filter(w => w.length > 0);
     return words.length === 0 || words.length >= minWords;
   }).join('\n');
+}
+
+// Detect if a line looks like a table row (mostly numbers, codes, or very short fields)
+function isTableRow(line) {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+  // Lines that are mostly numbers/codes separated by spaces or pipes
+  const codePattern = /^[\d\w]{1,10}(\s{2,}|\||\t)[\w\s]{1,50}$/;
+  const pipeRow = /\|.+\|/;
+  return codePattern.test(trimmed) || pipeRow.test(trimmed);
+}
+
+// Enrich table content with context so it embeds semantically
+function enrichTableContent(text, sourceName, handbook) {
+  const lines = text.split('\n');
+  const enriched = [];
+  let inTableBlock = false;
+  let tableContext = '';
+  let tableLines = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const prevLine = i > 0 ? lines[i-1] : '';
+    const nextLine = i < lines.length - 1 ? lines[i+1] : '';
+
+    if (isTableRow(line)) {
+      if (!inTableBlock) {
+        inTableBlock = true;
+        // Use preceding non-table line as context header
+        tableContext = enriched.length > 0
+          ? enriched[enriched.length - 1].trim()
+          : `${sourceName} reference data`;
+        tableLines = [];
+      }
+      tableLines.push(line.trim());
+    } else {
+      if (inTableBlock && tableLines.length > 0) {
+        // Convert table block to natural language sentences
+        const contextPrefix = tableContext
+          ? `The following ${handbook} codes and values are from "${tableContext}":`
+          : `The following codes appear in ${sourceName}:`;
+        enriched.push(contextPrefix);
+        tableLines.forEach(tl => {
+          // Try to split code from description
+          const parts = tl.split(/\s{2,}|\t|\|/).map(p => p.trim()).filter(Boolean);
+          if (parts.length >= 2) {
+            enriched.push(`Code ${parts[0]}: ${parts.slice(1).join(' ')}.`);
+          } else {
+            enriched.push(tl);
+          }
+        });
+        enriched.push('');
+        tableLines = [];
+        inTableBlock = false;
+        tableContext = '';
+      }
+      enriched.push(line);
+    }
+  }
+
+  // Flush any remaining table lines
+  if (inTableBlock && tableLines.length > 0) {
+    const contextPrefix = tableContext
+      ? `The following ${handbook} codes and values are from "${tableContext}":`
+      : `The following codes appear in ${sourceName}:`;
+    enriched.push(contextPrefix);
+    tableLines.forEach(tl => {
+      const parts = tl.split(/\s{2,}|\t|\|/).map(p => p.trim()).filter(Boolean);
+      if (parts.length >= 2) {
+        enriched.push(`Code ${parts[0]}: ${parts.slice(1).join(' ')}.`);
+      } else {
+        enriched.push(tl);
+      }
+    });
+  }
+
+  return enriched.join('\n');
+}
+
+// Convert bullet points and lists into complete sentences
+function enrichListContent(text, sourceName) {
+  return text
+    // Bullet points → complete sentences
+    .replace(/^[•·▪▸►‣⁃\-\*]\s+(.+)$/gm, (match, content) => {
+      const trimmed = content.trim();
+      // Already a sentence
+      if (trimmed.endsWith('.') || trimmed.endsWith(':')) return trimmed;
+      return trimmed + '.';
+    })
+    // Numbered lists — preserve but ensure sentence ending
+    .replace(/^\d+[\.\)]\s+(.+)$/gm, (match, content) => {
+      const trimmed = content.trim();
+      if (trimmed.endsWith('.') || trimmed.endsWith(':')) return trimmed;
+      return trimmed + '.';
+    });
+}
+
+// Full enhanced cleaning pipeline
+function enhancedClean(text, sourceName, handbook, config) {
+  const {
+    removePageNumbers = true,
+    removeHeaders = true,
+    collapseWhitespace = true,
+    removeShortLinesEnabled = false,
+    removeShortLinesMin = 5
+  } = config;
+
+  // Step 1: Basic noise removal
+  if (removePageNumbers || removeHeaders || collapseWhitespace) {
+    text = removePdfNoise(text);
+  }
+
+  // Step 2: Table enrichment — converts code tables to natural language
+  text = enrichTableContent(text, sourceName, handbook);
+
+  // Step 3: List enrichment — converts bullets to sentences
+  text = enrichListContent(text, sourceName);
+
+  // Step 4: Short line removal (optional)
+  if (removeShortLinesEnabled) {
+    text = removeShortLines(text, removeShortLinesMin);
+  }
+
+  // Step 5: Final whitespace cleanup
+  text = text.replace(/\n{3,}/g, '\n\n').trim();
+
+  return text;
 }
 
 function buildChunks(text, sourceName, handbook, category, chunkSize, chunkOverlap, minChunkWords, sourceLabel = '') {
@@ -1337,13 +1473,8 @@ async function runOptimizationPipeline(sources, config, progressCallback) {
   for (const source of sources) {
     let text = source.raw_text || '';
 
-    // Apply noise removal
-    if (removePageNumbers || removeHeaders || collapseWhitespace) {
-      text = removePdfNoise(text);
-    }
-    if (removeShortLinesEnabled) {
-      text = removeShortLines(text, removeShortLinesMin);
-    }
+    // Apply enhanced cleaning pipeline
+    text = enhancedClean(text, source.name, source.handbook, config);
 
     if (!text.trim() || text.split(/\s+/).length < minChunkWords) {
       processed++;
