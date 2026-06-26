@@ -1251,7 +1251,7 @@ function removeShortLines(text, minWords = 5) {
   }).join('\n');
 }
 
-function buildChunks(text, sourceName, handbook, category, chunkSize, chunkOverlap, minChunkWords) {
+function buildChunks(text, sourceName, handbook, category, chunkSize, chunkOverlap, minChunkWords, sourceLabel = '') {
   const words = text.split(/\s+/).filter(w => w.length > 0);
   const chunks = [];
   let i = 0;
@@ -1259,13 +1259,19 @@ function buildChunks(text, sourceName, handbook, category, chunkSize, chunkOverl
     const content = words.slice(i, i + chunkSize).join(' ');
     const wordCount = content.split(/\s+/).length;
     if (wordCount >= minChunkWords) {
+      // First chunk already has the full intro prepended by caller
+      // Subsequent chunks get a short source label so every chunk carries context
+      const chunkIndex = chunks.length;
+      const finalContent = chunkIndex === 0
+        ? content
+        : (sourceLabel ? `[${sourceLabel}]\n${content}` : content);
       chunks.push({
-        content,
+        content: finalContent,
         metadata: {
           source: sourceName,
           handbook,
           category: category || handbook,
-          chunkIndex: chunks.length,
+          chunkIndex,
           totalChunks: 0
         }
       });
@@ -1358,7 +1364,9 @@ async function runOptimizationPipeline(sources, config, progressCallback) {
     }
 
     const enriched = intro + text;
-    const chunks = buildChunks(enriched, source.name, source.handbook, source.metadata?.category || source.handbook, chunkSize, chunkOverlap, minChunkWords);
+    // Build short label for continuation chunks (chunks after the first)
+    const sourceLabel = `${source.handbook} — ${source.name}`;
+    const chunks = buildChunks(enriched, source.name, source.handbook, source.metadata?.category || source.handbook, chunkSize, chunkOverlap, minChunkWords, sourceLabel);
     allChunks.push(...chunks);
 
     processed++;
