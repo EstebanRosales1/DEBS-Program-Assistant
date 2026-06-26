@@ -522,15 +522,7 @@ tr:hover td{background:rgba(247,243,235,.5);}
 
           <label>Handbook</label>
           <select id="opt-handbook" style="margin-bottom:.8rem;">
-            <option value="Medi-Cal">Medi-Cal</option>
-            <option value="MEDS">MEDS</option>
-            <option value="Job Aids">Job Aids</option>
-            <option value="CalFresh">CalFresh</option>
-            <option value="CalWORKs">CalWORKs</option>
-            <option value="CWES">CWES</option>
-            <option value="General Relief">General Relief</option>
-            <option value="Foster Care">Foster Care</option>
-            <option value="Program Directives">Program Directives</option>
+            <option value="">Loading handbooks...</option>
           </select>
 
           <div style="background:var(--cream);border-radius:10px;padding:1rem;margin-bottom:.8rem;">
@@ -736,6 +728,7 @@ function showTab(name) {
   if (name==='data') loadDataManager();
   if (name==='versions') loadVersions();
   if (name==='ratings') loadRatings();
+  if (name==='optimize') loadHandbooks();
 }
 
 // ══════════════════════════════════════════════════════
@@ -768,6 +761,37 @@ async function apiFetch(url, body) {
 // ══════════════════════════════════════════════════════
 // OPTIMIZATION — Phase 1: UI only
 // ══════════════════════════════════════════════════════
+
+// Load live handbooks from archive into dropdown
+async function loadHandbooks() {
+  try {
+    const data = await apiFetch('/api/admin/archive-summary', {});
+    const select = document.getElementById('opt-handbook');
+    const current = select.value;
+    const handbooks = (data.summary || []).map(r => r.handbook).sort();
+    if (handbooks.length === 0) {
+      select.innerHTML = '<option value="">No handbooks found</option>';
+      return;
+    }
+    select.innerHTML = handbooks.map(hb =>
+      `<option value="${hb}"${hb === current ? ' selected' : ''}>${hb}</option>`
+    ).join('');
+  } catch(err) {
+    console.error('Failed to load handbooks:', err.message);
+    // Fall back to static list if API fails
+    const select = document.getElementById('opt-handbook');
+    if (select.options.length <= 1) {
+      select.innerHTML = `
+        <option value="Medi-Cal">Medi-Cal</option>
+        <option value="MEDS">MEDS</option>
+        <option value="Job Aids">Job Aids</option>
+        <option value="CalFresh">CalFresh</option>
+        <option value="CalWORKs">CalWORKs</option>
+        <option value="CWES">CWES</option>
+        <option value="Program Directives">Program Directives</option>`;
+    }
+  }
+}
 
 const PRESETS = {
   precision:     { chunkSize:250, overlap:0,   minWords:25, intro:'generic' },
