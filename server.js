@@ -136,6 +136,9 @@ async function getJob(jobId) {
 // Embeds chunks in parallel batches with job tracking
 // If jobId provided, updates progress in Supabase so dashboard can poll it
 // startFrom allows resuming from a specific chunk index
+const EMBED_BATCH_SIZE = 4;
+const EMBED_BATCH_DELAY = 300;
+
 async function embedAndStoreChunks(chunks, progressLabel = '', jobId = null, startFrom = 0) {
   let stored = 0;
   let errors = 0;
@@ -1248,7 +1251,7 @@ function removeShortLines(text, minWords = 5) {
   }).join('\n');
 }
 
-function buildChunks(text, sourceName, handbook, category, chunkSize, chunkOverlap, minChunkWords) {
+function buildChunks(text, sourceName, handbook, category, chunkSize, chunkOverlap, minChunkWords, sourceLabel = '') {
   const words = text.split(/\s+/).filter(w => w.length > 0);
   const chunks = [];
   let i = 0;
@@ -1256,13 +1259,19 @@ function buildChunks(text, sourceName, handbook, category, chunkSize, chunkOverl
     const content = words.slice(i, i + chunkSize).join(' ');
     const wordCount = content.split(/\s+/).length;
     if (wordCount >= minChunkWords) {
+      // First chunk already has the full intro prepended by caller
+      // Subsequent chunks get a short source label so every chunk carries context
+      const chunkIndex = chunks.length;
+      const finalContent = chunkIndex === 0
+        ? content
+        : (sourceLabel ? `[${sourceLabel}]\n${content}` : content);
       chunks.push({
-        content,
+        content: finalContent,
         metadata: {
           source: sourceName,
           handbook,
           category: category || handbook,
-          chunkIndex: chunks.length,
+          chunkIndex,
           totalChunks: 0
         }
       });
@@ -1293,7 +1302,7 @@ Respond with only the questions on one line separated by " | ". No preamble, no 
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
+        model: 'claude-sonnet-4-6', // Sonnet for higher quality question intros
         max_tokens: 150,
         messages: [{ role: 'user', content: prompt }]
       })
@@ -1355,7 +1364,9 @@ async function runOptimizationPipeline(sources, config, progressCallback) {
     }
 
     const enriched = intro + text;
-    const chunks = buildChunks(enriched, source.name, source.handbook, source.metadata?.category || source.handbook, chunkSize, chunkOverlap, minChunkWords);
+    // Build short label for continuation chunks (chunks after the first)
+    const sourceLabel = `${source.handbook} — ${source.name}`;
+    const chunks = buildChunks(enriched, source.name, source.handbook, source.metadata?.category || source.handbook, chunkSize, chunkOverlap, minChunkWords, sourceLabel);
     allChunks.push(...chunks);
 
     processed++;
@@ -1647,7 +1658,7 @@ app.post('/api/admin/rebuild-from-archive', async (req, res) => {
 
     } catch (err) {
       console.error(`\n❌ OPTIMIZATION FAILED: ${err.message}`);
-      console.error(`   DB state: old chunks were${allChunks?.length > 0 ? ' already deleted — restore from snapshot' : ' NOT deleted — DB unchanged'}`);
+      console.error(`   Restore from snapshot if chunks are missing`);
     }
   })();
 });

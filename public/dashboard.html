@@ -229,6 +229,7 @@ tr:hover td{background:rgba(247,243,235,.5);}
     <button class="tab" onclick="showTab('data')">📋 Data Manager</button>
     <button class="tab" onclick="showTab('versions')">📦 Versions</button>
     <button class="tab" onclick="showTab('ratings')">⭐ Ratings</button>
+    <button class="tab" onclick="showTab('optimize')">🔧 Optimize</button>
   </div>
 
   <div class="content">
@@ -507,6 +508,135 @@ tr:hover td{background:rgba(247,243,235,.5);}
       <div class="status" id="ratings-status"></div>
     </div>
 
+    <!-- ══ TAB: OPTIMIZE ══ -->
+    <!-- ══ TAB: OPTIMIZE ══ -->
+    <div class="panel" id="panel-optimize">
+      <div class="grid-2">
+
+        <!-- Settings -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-icon icon-bulk">🔧</div>
+            <div><div class="card-title">Optimization Settings</div><div class="card-desc">Configure strategy then click Preview before running</div></div>
+          </div>
+
+          <label>Handbook</label>
+          <select id="opt-handbook" style="margin-bottom:.8rem;">
+            <option value="">Loading handbooks...</option>
+          </select>
+
+          <div style="background:var(--cream);border-radius:10px;padding:1rem;margin-bottom:.8rem;">
+            <div style="font-family:'DM Mono',monospace;font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.8rem;">Chunking</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:.8rem;">
+              <div>
+                <label>Chunk Size</label>
+                <select id="opt-chunk-size" style="margin-bottom:0;">
+                  <option value="250">250w</option>
+                  <option value="300" selected>300w ★</option>
+                  <option value="400">400w</option>
+                  <option value="500">500w</option>
+                </select>
+              </div>
+              <div>
+                <label>Overlap</label>
+                <select id="opt-overlap" style="margin-bottom:0;">
+                  <option value="0">0w — No overlap</option>
+                  <option value="25">25w</option>
+                  <option value="30">30w</option>
+                  <option value="50" selected>50w ★</option>
+                  <option value="75">75w</option>
+                  <option value="100">100w</option>
+                </select>
+              </div>
+              <div>
+                <label>Min Words</label>
+                <input type="number" id="opt-min-words" value="30" min="10" max="100" style="margin-bottom:0;"/>
+              </div>
+            </div>
+          </div>
+
+          <div style="background:var(--cream);border-radius:10px;padding:1rem;margin-bottom:1rem;">
+            <div style="font-family:'DM Mono',monospace;font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.8rem;">Intro Style</div>
+            <div style="display:flex;flex-direction:column;gap:.5rem;">
+              <label class="checkbox-label" style="margin-bottom:0;"><input type="radio" name="opt-intro" value="none" id="intro-none"/><div><div style="font-weight:500;">None — raw text only</div></div></label>
+              <label class="checkbox-label" style="margin-bottom:0;"><input type="radio" name="opt-intro" value="generic" id="intro-generic" checked/><div><div style="font-weight:500;">Generic ★ Start here</div><div style="font-size:.72rem;color:var(--muted);">"This section covers X in the Y handbook"</div></div></label>
+              <label class="checkbox-label" style="margin-bottom:0;"><input type="radio" name="opt-intro" value="question" id="intro-question"/><div><div style="font-weight:500;">Question-style — best scores</div><div style="font-size:.72rem;color:var(--muted);">AI generates questions per source (slower)</div></div></label>
+            </div>
+          </div>
+
+          <div style="background:var(--cream);border-radius:10px;padding:1rem;margin-bottom:1rem;">
+            <div style="font-family:'DM Mono',monospace;font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.8rem;">Noise Removal</div>
+            <div style="display:flex;flex-direction:column;gap:.5rem;">
+              <label class="checkbox-label" style="margin-bottom:0;">
+                <input type="checkbox" id="opt-rm-pages" checked/>
+                <div><div style="font-weight:500;">Remove page numbers & repeated headers</div><div style="font-size:.72rem;color:var(--muted);">Removes "Page X of Y", county headers, date lines</div></div>
+              </label>
+              <label class="checkbox-label" style="margin-bottom:0;">
+                <input type="checkbox" id="opt-rm-whitespace" checked/>
+                <div><div style="font-weight:500;">Collapse excess whitespace</div><div style="font-size:.72rem;color:var(--muted);">Removes blank lines, extra spaces, tab characters</div></div>
+              </label>
+              <label class="checkbox-label" style="margin-bottom:0;">
+                <input type="checkbox" id="opt-rm-short"/>
+                <div>
+                  <div style="display:flex;align-items:center;gap:6px;">
+                    <span style="font-weight:500;">Remove lines under</span>
+                    <input type="number" id="opt-short-min" value="5" min="2" max="20" style="width:50px;padding:3px 6px;margin-bottom:0;font-size:.8rem;display:inline-block;"/>
+                    <span style="font-weight:500;">words</span>
+                  </div>
+                  <div style="font-size:.72rem;color:var(--muted);">Removes lone page numbers, stray labels, navigation links</div>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <button class="btn btn-outline" style="margin-bottom:.6rem;" onclick="previewOptimization()">👁 Preview First</button>
+          <div class="status" id="opt-status"></div>
+        </div>
+
+        <!-- Right column -->
+        <div style="display:flex;flex-direction:column;gap:1.5rem;">
+
+          <!-- Presets -->
+          <div class="card">
+            <div style="font-family:'DM Serif Display',serif;font-size:1rem;color:var(--navy);margin-bottom:.6rem;">Presets</div>
+            <div style="display:flex;flex-direction:column;gap:.5rem;">
+              <button class="btn btn-outline btn-sm" onclick="loadPreset('precision')" style="text-align:left;padding:10px 14px;">
+                <div style="font-weight:600;">Precision — 250w/30o</div>
+                <div style="font-size:.72rem;color:var(--muted);">Highest scores · dense policy text</div>
+              </button>
+              <button class="btn btn-outline btn-sm" onclick="loadPreset('standard')" style="text-align:left;padding:10px 14px;">
+                <div style="font-weight:600;">Standard — 300w/50o ★</div>
+                <div style="font-size:.72rem;color:var(--muted);">Best balance · recommended default</div>
+              </button>
+              <button class="btn btn-outline btn-sm" onclick="loadPreset('balanced')" style="text-align:left;padding:10px 14px;">
+                <div style="font-weight:600;">Balanced — 400w/75o</div>
+                <div style="font-size:.72rem;color:var(--muted);">Procedural content · Job Aids</div>
+              </button>
+              <button class="btn btn-outline btn-sm" onclick="loadPreset('comprehensive')" style="text-align:left;padding:10px 14px;">
+                <div style="font-weight:600;">Comprehensive — 500w/100o</div>
+                <div style="font-size:.72rem;color:var(--muted);">Large reference docs · MEDS Alerts</div>
+              </button>
+            </div>
+          </div>
+
+          <!-- Preview result (hidden until preview runs) -->
+          <div class="card" id="opt-preview-card" style="display:none;">
+            <div style="font-family:'DM Serif Display',serif;font-size:1rem;color:var(--navy);margin-bottom:1rem;">👁 Preview</div>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.8rem;margin-bottom:1rem;">
+              <div class="stat-box"><div class="stat-num" id="prev-sources">—</div><div class="stat-label">Sources</div></div>
+              <div class="stat-box"><div class="stat-num" id="prev-chunks">—</div><div class="stat-label">Est. Chunks</div></div>
+              <div class="stat-box"><div class="stat-num" id="prev-avg">—</div><div class="stat-label">Avg Words</div></div>
+            </div>
+            <div style="font-size:.72rem;font-family:'DM Mono',monospace;color:var(--muted);margin-bottom:.4rem;text-transform:uppercase;">Sample chunk</div>
+            <div id="prev-sample" style="background:var(--navy);border-radius:8px;padding:10px 12px;font-family:'DM Mono',monospace;font-size:.72rem;color:rgba(255,255,255,.75);line-height:1.7;max-height:150px;overflow-y:auto;white-space:pre-wrap;"></div>
+            <div id="prev-source-name" style="font-size:.7rem;color:var(--muted);font-family:'DM Mono',monospace;margin-top:4px;margin-bottom:1rem;"></div>
+            <button class="btn" id="opt-run-btn" onclick="runOptimization()" style="background:var(--success);">🚀 Run Optimization</button>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
   </div><!-- end content -->
 </div><!-- end shell -->
 
@@ -554,7 +684,15 @@ function login() {
   fetch('/api/admin/list', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({adminKey: key})
-  }).then(r=>r.json()).then(data=>{
+  }).then(async r => {
+    const text = await r.text();
+    // Guard against HTML error pages
+    if (text.trim().startsWith('<')) {
+      document.getElementById('login-error').textContent = 'Server error — check Render logs';
+      console.error('Server returned HTML instead of JSON:', text.substring(0, 200));
+      return;
+    }
+    const data = JSON.parse(text);
     if (data.error === 'Unauthorized') {
       document.getElementById('login-error').textContent = 'Incorrect password';
     } else {
@@ -563,7 +701,10 @@ function login() {
       document.getElementById('shell').style.display = 'flex';
       loadKB();
     }
-  }).catch(()=>document.getElementById('login-error').textContent='Connection error');
+  }).catch(err => {
+    document.getElementById('login-error').textContent = 'Connection error: ' + err.message;
+    console.error('Login error:', err);
+  });
 }
 
 function logout() {
@@ -578,7 +719,7 @@ function logout() {
 // ══════════════════════════════════════════════════════
 function showTab(name) {
   document.querySelectorAll('.tab').forEach((t,i)=>{
-    const names=['add','loader','kb','data','versions','ratings'];
+    const names=['add','loader','kb','data','versions','ratings','optimize'];
     t.classList.toggle('active', names[i]===name);
   });
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
@@ -587,6 +728,7 @@ function showTab(name) {
   if (name==='data') loadDataManager();
   if (name==='versions') loadVersions();
   if (name==='ratings') loadRatings();
+  if (name==='optimize') loadHandbooks();
 }
 
 // ══════════════════════════════════════════════════════
@@ -600,6 +742,168 @@ function setStatus(id, type, msg) {
 }
 
 function setSaveStatus(type,msg){const el=document.getElementById('save-status');if(!el)return;el.className='save-status '+type;el.textContent=msg;}
+
+// Safe fetch wrapper — catches HTML error pages before JSON.parse throws
+async function apiFetch(url, body) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ adminKey, ...body })
+  });
+  const text = await res.text();
+  if (text.trim().startsWith('<')) {
+    console.error(`API ${url} returned HTML:`, text.substring(0, 300));
+    throw new Error(`Server error on ${url} — check Render logs`);
+  }
+  return JSON.parse(text);
+}
+
+// ══════════════════════════════════════════════════════
+// OPTIMIZATION — Phase 1: UI only
+// ══════════════════════════════════════════════════════
+
+// Load live handbooks from archive into dropdown
+async function loadHandbooks() {
+  try {
+    const data = await apiFetch('/api/admin/archive-summary', {});
+    const select = document.getElementById('opt-handbook');
+    const current = select.value;
+    const handbooks = (data.summary || []).map(r => r.handbook).sort();
+    if (handbooks.length === 0) {
+      select.innerHTML = '<option value="">No handbooks found</option>';
+      return;
+    }
+    select.innerHTML = handbooks.map(hb =>
+      `<option value="${hb}"${hb === current ? ' selected' : ''}>${hb}</option>`
+    ).join('');
+  } catch(err) {
+    console.error('Failed to load handbooks:', err.message);
+    // Fall back to static list if API fails
+    const select = document.getElementById('opt-handbook');
+    if (select.options.length <= 1) {
+      select.innerHTML = `
+        <option value="Medi-Cal">Medi-Cal</option>
+        <option value="MEDS">MEDS</option>
+        <option value="Job Aids">Job Aids</option>
+        <option value="CalFresh">CalFresh</option>
+        <option value="CalWORKs">CalWORKs</option>
+        <option value="CWES">CWES</option>
+        <option value="Program Directives">Program Directives</option>`;
+    }
+  }
+}
+
+const PRESETS = {
+  precision:     { chunkSize:250, overlap:0,   minWords:25, intro:'generic' },
+  standard:      { chunkSize:300, overlap:50,  minWords:30, intro:'generic' },
+  balanced:      { chunkSize:400, overlap:75,  minWords:30, intro:'generic' },
+  comprehensive: { chunkSize:500, overlap:100, minWords:30, intro:'none'    }
+};
+
+function loadPreset(key) {
+  const p = PRESETS[key];
+  if (!p) return;
+  document.getElementById('opt-chunk-size').value = p.chunkSize;
+  document.getElementById('opt-overlap').value = p.overlap;
+  document.getElementById('opt-min-words').value = p.minWords;
+  const radio = document.getElementById('intro-' + p.intro);
+  if (radio) radio.checked = true;
+  setStatus('opt-status', 'success', '✅ Loaded preset: ' + key);
+  setTimeout(() => { document.getElementById('opt-status').className = 'status'; }, 2000);
+}
+
+function getOptConfig() {
+  return {
+    chunkSize: parseInt(document.getElementById('opt-chunk-size').value) || 300,
+    chunkOverlap: (() => { const v = parseInt(document.getElementById('opt-overlap').value); return isNaN(v) ? 50 : v; })(),
+    minChunkWords: parseInt(document.getElementById('opt-min-words').value) || 30,
+    introStyle: document.querySelector('input[name="opt-intro"]:checked')?.value || 'generic',
+    removePageNumbers: document.getElementById('opt-rm-pages').checked,
+    removeHeaders: document.getElementById('opt-rm-pages').checked,
+    collapseWhitespace: document.getElementById('opt-rm-whitespace').checked,
+    removeShortLinesEnabled: document.getElementById('opt-rm-short').checked,
+    removeShortLinesMin: parseInt(document.getElementById('opt-short-min').value) || 5
+  };
+}
+
+async function previewOptimization() {
+  const handbook = document.getElementById('opt-handbook').value;
+  const config = getOptConfig();
+  setStatus('opt-status', 'loading', '⏳ Generating preview...');
+  try {
+    const res = await fetch('/api/admin/optimize/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminKey, handbook, config })
+    });
+    const text = await res.text();
+    if (text.trim().startsWith('<')) throw new Error('Server error — check Render logs');
+    const data = JSON.parse(text);
+    if (data.error) throw new Error(data.error);
+
+    // Show preview card
+    document.getElementById('prev-sources').textContent = data.totalSources?.toLocaleString() || '—';
+    document.getElementById('prev-chunks').textContent = data.estimatedChunks?.toLocaleString() || '—';
+    document.getElementById('prev-avg').textContent = data.avgWordsPerChunk ? data.avgWordsPerChunk + 'w' : '—';
+    document.getElementById('prev-sample').textContent = data.sampleChunk?.preview || 'No sample available';
+    document.getElementById('prev-source-name').textContent = data.sampleChunk?.source ? 'Source: ' + data.sampleChunk.source : '';
+    document.getElementById('opt-preview-card').style.display = 'block';
+    document.getElementById('opt-status').className = 'status';
+  } catch(err) {
+    setStatus('opt-status', 'error', '❌ ' + err.message);
+  }
+}
+
+async function runOptimization() {
+  const handbook = document.getElementById('opt-handbook').value;
+  const config = getOptConfig();
+
+  // Get current chunk count for the confirm dialog
+  let currentChunks = '?';
+  try {
+    const kbData = await apiFetch('/api/admin/list', {});
+    currentChunks = (kbData.byHandbook?.[handbook] || 0).toLocaleString();
+  } catch(e) {}
+
+  if (!confirm(
+    '⚠️ OPTIMIZATION SCOPE\n\n' +
+    'Handbook:         ' + handbook + '\n' +
+    'Chunks to replace: ' + currentChunks + '\n' +
+    'Chunk size:       ' + config.chunkSize + 'w / ' + config.chunkOverlap + 'w overlap\n' +
+    'Intro style:      ' + config.introStyle + '\n\n' +
+    'SAFE SEQUENCE:\n' +
+    '1. Generate ALL new chunks (no DB changes yet)\n' +
+    '2. Delete old ' + handbook + ' chunks only\n' +
+    '3. Insert new chunks immediately\n\n' +
+    'Only ' + handbook + ' is affected. All other handbooks stay untouched.\n\n' +
+    'Have you saved a snapshot? Click OK to proceed.'
+  )) return;
+
+  document.getElementById('opt-run-btn').disabled = true;
+  setStatus('opt-status', 'loading', '⏳ Starting optimization of ' + handbook + '...');
+
+  try {
+    const res = await fetch('/api/admin/optimize/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminKey, handbook, config })
+    });
+    const text = await res.text();
+    if (text.trim().startsWith('<')) throw new Error('Server error — check Render logs');
+    const data = JSON.parse(text);
+    if (data.error) throw new Error(data.error);
+
+    setStatus('opt-status', 'success',
+      '✅ Optimization started — ' + data.totalSources + ' sources processing in background.\n' +
+      'Phase 1 (generate chunks) runs first — no DB changes until all chunks are ready.\n' +
+      'Check Knowledge Base tab in a few minutes for updated count.'
+    );
+  } catch(err) {
+    setStatus('opt-status', 'error', '❌ ' + err.message);
+  }
+
+  document.getElementById('opt-run-btn').disabled = false;
+}
 
 // ══════════════════════════════════════════════════════
 // ADD CONTENT — URL
@@ -890,8 +1194,7 @@ function addLoadLog(type,msg){const b=document.getElementById('load-log');const 
 // ══════════════════════════════════════════════════════
 async function loadKB() {
   try {
-    const res=await fetch('/api/admin/list',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({adminKey})});
-    const data=await res.json();
+    const data = await apiFetch('/api/admin/list', {});
     document.getElementById('kb-total').textContent=(data.total||0).toLocaleString();
     const sources=data.sources||{};
     const count=Object.keys(sources).length;
@@ -1133,7 +1436,6 @@ async function deleteSnapshot(id,name){
 }
 
 // ══════════════════════════════════════════════════════
-// RATINGS & OPTIMIZATION REVIEW
 // ══════════════════════════════════════════════════════
 async function loadRatings() {
   try {
