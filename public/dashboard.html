@@ -549,6 +549,7 @@ tr:hover td{background:rgba(247,243,235,.5);}
                 <label>Overlap</label>
                 <select id="opt-overlap" style="margin-bottom:0;">
                   <option value="25">25w</option>
+                  <option value="30">30w</option>
                   <option value="50" selected>50w ★</option>
                   <option value="75">75w</option>
                   <option value="100">100w</option>
@@ -788,9 +789,9 @@ function loadPreset(key) {
 
 function getOptConfig() {
   return {
-    chunkSize: parseInt(document.getElementById('opt-chunk-size').value),
-    chunkOverlap: parseInt(document.getElementById('opt-overlap').value),
-    minChunkWords: parseInt(document.getElementById('opt-min-words').value),
+    chunkSize: parseInt(document.getElementById('opt-chunk-size').value) || 300,
+    chunkOverlap: parseInt(document.getElementById('opt-overlap').value) || 50,
+    minChunkWords: parseInt(document.getElementById('opt-min-words').value) || 30,
     introStyle: document.querySelector('input[name="opt-intro"]:checked')?.value || 'generic',
     removePageNumbers: document.getElementById('opt-rm-pages').checked,
     removeHeaders: document.getElementById('opt-rm-pages').checked,
