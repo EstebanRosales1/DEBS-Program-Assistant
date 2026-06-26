@@ -570,6 +570,31 @@ tr:hover td{background:rgba(247,243,235,.5);}
             </div>
           </div>
 
+          <div style="background:var(--cream);border-radius:10px;padding:1rem;margin-bottom:1rem;">
+            <div style="font-family:'DM Mono',monospace;font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.8rem;">Noise Removal</div>
+            <div style="display:flex;flex-direction:column;gap:.5rem;">
+              <label class="checkbox-label" style="margin-bottom:0;">
+                <input type="checkbox" id="opt-rm-pages" checked/>
+                <div><div style="font-weight:500;">Remove page numbers & repeated headers</div><div style="font-size:.72rem;color:var(--muted);">Removes "Page X of Y", county headers, date lines</div></div>
+              </label>
+              <label class="checkbox-label" style="margin-bottom:0;">
+                <input type="checkbox" id="opt-rm-whitespace" checked/>
+                <div><div style="font-weight:500;">Collapse excess whitespace</div><div style="font-size:.72rem;color:var(--muted);">Removes blank lines, extra spaces, tab characters</div></div>
+              </label>
+              <label class="checkbox-label" style="margin-bottom:0;">
+                <input type="checkbox" id="opt-rm-short"/>
+                <div>
+                  <div style="display:flex;align-items:center;gap:6px;">
+                    <span style="font-weight:500;">Remove lines under</span>
+                    <input type="number" id="opt-short-min" value="5" min="2" max="20" style="width:50px;padding:3px 6px;margin-bottom:0;font-size:.8rem;display:inline-block;"/>
+                    <span style="font-weight:500;">words</span>
+                  </div>
+                  <div style="font-size:.72rem;color:var(--muted);">Removes lone page numbers, stray labels, navigation links</div>
+                </div>
+              </label>
+            </div>
+          </div>
+
           <button class="btn btn-outline" style="margin-bottom:.6rem;" onclick="previewOptimization()">👁 Preview First</button>
           <div class="status" id="opt-status"></div>
         </div>
@@ -767,11 +792,11 @@ function getOptConfig() {
     chunkOverlap: parseInt(document.getElementById('opt-overlap').value),
     minChunkWords: parseInt(document.getElementById('opt-min-words').value),
     introStyle: document.querySelector('input[name="opt-intro"]:checked')?.value || 'generic',
-    removePageNumbers: true,
-    removeHeaders: true,
-    collapseWhitespace: true,
-    removeShortLinesEnabled: false,
-    removeShortLinesMin: 5
+    removePageNumbers: document.getElementById('opt-rm-pages').checked,
+    removeHeaders: document.getElementById('opt-rm-pages').checked,
+    collapseWhitespace: document.getElementById('opt-rm-whitespace').checked,
+    removeShortLinesEnabled: document.getElementById('opt-rm-short').checked,
+    removeShortLinesMin: parseInt(document.getElementById('opt-short-min').value) || 5
   };
 }
 
