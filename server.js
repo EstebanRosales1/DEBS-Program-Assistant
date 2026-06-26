@@ -1296,7 +1296,7 @@ Respond with only the questions on one line separated by " | ". No preamble, no 
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
+        model: 'claude-sonnet-4-6', // Sonnet for higher quality question intros
         max_tokens: 150,
         messages: [{ role: 'user', content: prompt }]
       })
