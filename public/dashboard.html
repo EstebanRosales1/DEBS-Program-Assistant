@@ -548,6 +548,7 @@ tr:hover td{background:rgba(247,243,235,.5);}
               <div>
                 <label>Overlap</label>
                 <select id="opt-overlap" style="margin-bottom:0;">
+                  <option value="0">0w — No overlap</option>
                   <option value="25">25w</option>
                   <option value="30">30w</option>
                   <option value="50" selected>50w ★</option>
@@ -769,7 +770,7 @@ async function apiFetch(url, body) {
 // ══════════════════════════════════════════════════════
 
 const PRESETS = {
-  precision:     { chunkSize:250, overlap:30,  minWords:25, intro:'generic' },
+  precision:     { chunkSize:250, overlap:0,   minWords:25, intro:'generic' },
   standard:      { chunkSize:300, overlap:50,  minWords:30, intro:'generic' },
   balanced:      { chunkSize:400, overlap:75,  minWords:30, intro:'generic' },
   comprehensive: { chunkSize:500, overlap:100, minWords:30, intro:'none'    }
@@ -790,7 +791,7 @@ function loadPreset(key) {
 function getOptConfig() {
   return {
     chunkSize: parseInt(document.getElementById('opt-chunk-size').value) || 300,
-    chunkOverlap: parseInt(document.getElementById('opt-overlap').value) || 50,
+    chunkOverlap: (() => { const v = parseInt(document.getElementById('opt-overlap').value); return isNaN(v) ? 50 : v; })(),
     minChunkWords: parseInt(document.getElementById('opt-min-words').value) || 30,
     introStyle: document.querySelector('input[name="opt-intro"]:checked')?.value || 'generic',
     removePageNumbers: document.getElementById('opt-rm-pages').checked,
