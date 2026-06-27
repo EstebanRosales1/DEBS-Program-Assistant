@@ -731,6 +731,207 @@ app.post('/api/admin/export-session', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Source quality scanner ─────────────────────────────────────────────────
+
+function scoreSourceQuality(raw_text, name) {
+  if (!raw_text || raw_text.trim().length === 0) {
+    return { score: 0, flags: ['empty'], wordCount: 0, lineCount: 0, avgLineLen: 0, numericDensity: 0 };
+  }
+
+  const lines = raw_text.split('\n').filter(l => l.trim().length > 0);
+  const words = raw_text.split(/\s+/).filter(w => w.length > 0);
+  const chars = raw_text.replace(/\s/g, '').length;
+
+  const lineCount = lines.length;
+  const wordCount = words.length;
+  const avgLineLen = lineCount > 0 ? chars / lineCount : 0;
+  const wordsPerLine = lineCount > 0 ? wordCount / lineCount : 0;
+
+  // Numeric density — what fraction of words are numbers or codes
+  const numericWords = words.filter(w => /^\d+[\d\-\.]*$/.test(w) || /^[\d]{3,}$/.test(w)).length;
+  const numericDensity = wordCount > 0 ? numericWords / wordCount : 0;
+
+  // Short line ratio — what fraction of lines are very short (under 5 words)
+  const shortLines = lines.filter(l => l.trim().split(/\s+/).length < 5).length;
+  const shortLineRatio = lineCount > 0 ? shortLines / lineCount : 0;
+
+  // Repetitive header ratio — lines that look like PDF headers/footers
+  const headerPattern = /^(page \d+|mcp code dir|\d+\s*$|part \d+|updated:|page updated)/i;
+  const headerLines = lines.filter(l => headerPattern.test(l.trim())).length;
+  const headerRatio = lineCount > 0 ? headerLines / lineCount : 0;
+
+  // Flag conditions
+  const flags = [];
+  if (wordCount < 50) flags.push('too_short');
+  if (wordsPerLine < 4) flags.push('low_words_per_line');
+  if (numericDensity > 0.20) flags.push('high_numeric_density');
+  if (shortLineRatio > 0.50) flags.push('high_short_line_ratio');
+  if (headerRatio > 0.10) flags.push('high_header_noise');
+  if (avgLineLen < 15) flags.push('short_avg_line');
+
+  // Quality score 0-100 (higher = better quality)
+  let score = 100;
+  if (flags.includes('too_short')) score -= 40;
+  if (flags.includes('low_words_per_line')) score -= 25;
+  if (flags.includes('high_numeric_density')) score -= 20;
+  if (flags.includes('high_short_line_ratio')) score -= 20;
+  if (flags.includes('high_header_noise')) score -= 15;
+  if (flags.includes('short_avg_line')) score -= 15;
+  score = Math.max(0, score);
+
+  return { score, flags, wordCount, lineCount, avgLineLen: Math.round(avgLineLen), wordsPerLine: Math.round(wordsPerLine * 10) / 10, numericDensity: Math.round(numericDensity * 100), shortLineRatio: Math.round(shortLineRatio * 100) };
+}
+
+app.post('/api/admin/scan-quality', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  const { handbook, limit = 50 } = req.body;
+
+  try {
+    // Get total count
+    const countUrl = handbook
+      ? `raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=count`
+      : 'raw_sources?select=count';
+    const countRes = await fetch(supabaseUrl(countUrl), {
+      headers: supabaseHeaders({ 'Prefer': 'count=exact', 'Range': '0-0' })
+    });
+    const total = parseInt(countRes.headers.get('content-range')?.split('/')[1] || '0');
+
+    // Fetch all sources in batches — only fields needed for scoring
+    let allSources = [];
+    let offset = 0;
+    const batchSize = 200;
+    const baseUrl = handbook
+      ? `raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=id,name,handbook,raw_text&order=name.asc`
+      : 'raw_sources?select=id,name,handbook,raw_text&order=handbook.asc,name.asc';
+
+    while (offset < total) {
+      const batchRes = await fetch(
+        supabaseUrl(`${baseUrl}&limit=${batchSize}&offset=${offset}`),
+        { headers: supabaseHeaders({ 'Range': `${offset}-${offset + batchSize - 1}` }) }
+      );
+      const batch = await batchRes.json();
+      if (!Array.isArray(batch) || batch.length === 0) break;
+      allSources = allSources.concat(batch);
+      offset += batchSize;
+    }
+
+    // Score each source
+    const scored = allSources.map(src => {
+      const quality = scoreSourceQuality(src.raw_text, src.name);
+      return {
+        id: src.id,
+        name: src.name,
+        handbook: src.handbook,
+        ...quality
+      };
+    });
+
+    // Sort by score ascending (worst first)
+    scored.sort((a, b) => a.score - b.score);
+
+    // Summary stats
+    const flagged = scored.filter(s => s.flags.length > 0);
+    const byHandbook = {};
+    scored.forEach(s => {
+      if (!byHandbook[s.handbook]) byHandbook[s.handbook] = { total: 0, flagged: 0, avgScore: 0, scores: [] };
+      byHandbook[s.handbook].total++;
+      byHandbook[s.handbook].scores.push(s.score);
+      if (s.flags.length > 0) byHandbook[s.handbook].flagged++;
+    });
+    Object.values(byHandbook).forEach(hb => {
+      hb.avgScore = Math.round(hb.scores.reduce((a, b) => a + b, 0) / hb.scores.length);
+      delete hb.scores;
+    });
+
+    res.json({
+      total: allSources.length,
+      flagged: flagged.length,
+      flaggedPct: Math.round(flagged.length / allSources.length * 100),
+      byHandbook,
+      worstSources: scored.slice(0, limit), // worst quality first
+      scannedAt: new Date().toISOString()
+    });
+
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// AI reformat a single source using Sonnet
+app.post('/api/admin/reformat-source', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  const { id } = req.body;
+  if (!id) return res.status(400).json({ error: 'id required' });
+
+  try {
+    // Fetch the source
+    const srcRes = await fetch(supabaseUrl(`raw_sources?id=eq.${id}&select=*`), {
+      headers: supabaseHeaders()
+    });
+    const sources = await srcRes.json();
+    if (!Array.isArray(sources) || !sources[0]) return res.status(404).json({ error: 'Source not found' });
+    const source = sources[0];
+
+    // Respond immediately — reformat runs in background
+    res.json({ success: true, message: `Reformatting "${source.name}" in background...`, id });
+
+    (async () => {
+      try {
+        console.log(`🔄 Reformatting source: "${source.name}" (${source.handbook})`);
+
+        const prompt = `You are reformatting a Medi-Cal policy document that was extracted from a PDF. The extraction may have produced garbled text, broken table rows, or fragmented sentences.
+
+Reformat the following raw text into clean, natural language sentences that will be easy to search semantically. Follow these rules:
+1. Convert any tables or code lists into clear sentences like "HCP number 309 is Santa Clara Family Health Plan, a Two-Plan Local Initiative. Phone: (408) 376-2000."
+2. Remove PDF artifacts like page numbers, repeated headers, navigation text, and divider lines
+3. Preserve all factual content — do not add or invent information
+4. Convert bullet points and numbered lists into complete sentences
+5. Keep all policy details, dates, dollar amounts, code numbers, and proper names exactly as they appear
+6. Output only the reformatted text — no preamble, no explanation
+
+Source name: ${source.name}
+Handbook: ${source.handbook}
+
+Raw text to reformat:
+${source.raw_text.substring(0, 6000)}`;
+
+        const response = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': ANTHROPIC_API_KEY,
+            'anthropic-version': '2023-06-01'
+          },
+          body: JSON.stringify({
+            model: 'claude-sonnet-4-6',
+            max_tokens: 4000,
+            messages: [{ role: 'user', content: prompt }]
+          })
+        });
+
+        const data = await response.json();
+        if (data.error || !data.content?.[0]) {
+          console.error(`Reformat API error for "${source.name}": ${JSON.stringify(data.error)}`);
+          return;
+        }
+
+        const reformatted = data.content[0].text.trim();
+        console.log(`✅ Reformatted "${source.name}": ${source.raw_text.length} → ${reformatted.length} chars`);
+
+        // Save reformatted text back to raw_sources
+        await fetch(supabaseUrl(`raw_sources?id=eq.${id}`), {
+          method: 'PATCH',
+          headers: supabaseHeaders({ 'Prefer': 'return=minimal' }),
+          body: JSON.stringify({ raw_text: reformatted })
+        });
+
+        console.log(`💾 Saved reformatted text for "${source.name}"`);
+      } catch (err) {
+        console.error(`Reformat failed for id ${id}: ${err.message}`);
+      }
+    })();
+
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // List all sessions
 app.post('/api/admin/sessions', async (req, res) => {
   if (!authCheck(req, res)) return;
