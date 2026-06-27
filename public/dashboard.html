@@ -898,7 +898,7 @@ async function runQualityScan() {
             </div>
             <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;">
               <div style="font-family:'DM Mono',monospace;font-size:.9rem;font-weight:700;color:${scoreColor};">${s.score}</div>
-              <button class="abtn abtn-edit" onclick="reformatSource(${s.id}, '${s.name.replace(/'/g, "\\'")}', this)">✨ Reformat</button>
+              <button class="abtn" style="opacity:.4;cursor:not-allowed;font-size:.65rem;" disabled title="Coming soon — reformat with safety backup">✨ Soon</button>
             </div>
           </div>
         </div>`;
@@ -913,20 +913,7 @@ async function runQualityScan() {
 }
 
 async function reformatSource(id, name, btn) {
-  if (!confirm(`Reformat "${name}" using AI?\n\nSonnet will rewrite this source as clean natural language. The original text will be replaced. This cannot be undone.\n\nProceed?`)) return;
-  btn.disabled = true;
-  btn.textContent = '⏳';
-  try {
-    const data = await apiFetch('/api/admin/reformat-source', { id });
-    if (data.error) throw new Error(data.error);
-    btn.textContent = '✅ Done';
-    btn.style.background = 'var(--success)';
-    btn.style.color = '#fff';
-  } catch(err) {
-    btn.textContent = '❌ Error';
-    btn.disabled = false;
-    alert('Reformat failed: ' + err.message);
-  }
+  alert('Reformat coming soon — safety backup feature being added first.');
 }
 // ══════════════════════════════════════════════════════
 
