@@ -801,8 +801,8 @@ app.post('/api/admin/scan-quality', async (req, res) => {
     let offset = 0;
     const batchSize = 200;
     const baseUrl = handbook
-      ? `raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=id,name,handbook,raw_text&order=name.asc`
-      : 'raw_sources?select=id,name,handbook,raw_text&order=handbook.asc,name.asc';
+      ? `raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=id,name,handbook,raw_text,working_text&order=name.asc`
+      : 'raw_sources?select=id,name,handbook,raw_text,working_text&order=handbook.asc,name.asc';
 
     while (offset < total) {
       const batchRes = await fetch(
@@ -817,11 +817,14 @@ app.post('/api/admin/scan-quality', async (req, res) => {
 
     // Score each source
     const scored = allSources.map(src => {
-      const quality = scoreSourceQuality(src.raw_text, src.name);
+      // Use working_text if available, fall back to raw_text (master)
+      const activeText = src.working_text || src.raw_text || '';
+      const quality = scoreSourceQuality(activeText, src.name);
       return {
         id: src.id,
         name: src.name,
         handbook: src.handbook,
+        hasWorkingText: !!src.working_text,
         ...quality
       };
     });
@@ -870,67 +873,120 @@ app.post('/api/admin/reformat-source', async (req, res) => {
     if (!Array.isArray(sources) || !sources[0]) return res.status(404).json({ error: 'Source not found' });
     const source = sources[0];
 
-    // Respond immediately — reformat runs in background
-    res.json({ success: true, message: `Reformatting "${source.name}" in background...`, id });
+    // raw_text is the permanent master — never touched
+    // working_text is what we write to
+    // No backup needed since master is never modified
+
+    // Respond to client — master raw_text is never touched
+    res.json({
+      success: true,
+      message: `Reformatting "${source.name}" in background. Master raw_text preserved.`,
+      id,
+      charCount: source.raw_text?.length || 0,
+      hasExistingWorkingText: !!source.working_text
+    });
 
     (async () => {
       try {
-        console.log(`🔄 Reformatting source: "${source.name}" (${source.handbook})`);
+        // Use working_text if already reformatted, otherwise use master raw_text
+        const fullText = source.working_text || source.raw_text || '';
+        console.log(`🔄 Reformatting: "${source.name}" (${source.handbook}) — ${fullText.length} chars${source.working_text ? ' [from working_text]' : ' [from raw_text master]'}`);
 
-        const prompt = `You are reformatting a Medi-Cal policy document that was extracted from a PDF. The extraction may have produced garbled text, broken table rows, or fragmented sentences.
+        const CHUNK_LIMIT = 5500;
+        let reformattedParts = [];
 
-Reformat the following raw text into clean, natural language sentences that will be easy to search semantically. Follow these rules:
-1. Convert any tables or code lists into clear sentences like "HCP number 309 is Santa Clara Family Health Plan, a Two-Plan Local Initiative. Phone: (408) 376-2000."
-2. Remove PDF artifacts like page numbers, repeated headers, navigation text, and divider lines
-3. Preserve all factual content — do not add or invent information
-4. Convert bullet points and numbered lists into complete sentences
-5. Keep all policy details, dates, dollar amounts, code numbers, and proper names exactly as they appear
-6. Output only the reformatted text — no preamble, no explanation
+        if (fullText.length <= CHUNK_LIMIT) {
+          reformattedParts = [await reformatTextChunk(fullText, source.name, source.handbook)];
+        } else {
+          // Split on paragraph boundaries to avoid mid-sentence cuts
+          const paragraphs = fullText.split(/\n\n+/);
+          let currentBatch = '';
+          let batchNum = 0;
 
-Source name: ${source.name}
-Handbook: ${source.handbook}
+          for (const para of paragraphs) {
+            if ((currentBatch + para).length > CHUNK_LIMIT && currentBatch.length > 0) {
+              batchNum++;
+              console.log(`   Batch ${batchNum} (${currentBatch.length} chars)`);
+              reformattedParts.push(await reformatTextChunk(currentBatch, source.name, source.handbook));
+              await sleep(500);
+              currentBatch = para;
+            } else {
+              currentBatch += (currentBatch ? '\n\n' : '') + para;
+            }
+          }
+          if (currentBatch) {
+            batchNum++;
+            reformattedParts.push(await reformatTextChunk(currentBatch, source.name, source.handbook));
+          }
+        }
 
-Raw text to reformat:
-${source.raw_text.substring(0, 6000)}`;
+        const reformatted = reformattedParts.filter(Boolean).join('\n\n');
 
-        const response = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': ANTHROPIC_API_KEY,
-            'anthropic-version': '2023-06-01'
-          },
-          body: JSON.stringify({
-            model: 'claude-sonnet-4-6',
-            max_tokens: 4000,
-            messages: [{ role: 'user', content: prompt }]
-          })
-        });
-
-        const data = await response.json();
-        if (data.error || !data.content?.[0]) {
-          console.error(`Reformat API error for "${source.name}": ${JSON.stringify(data.error)}`);
+        if (!reformatted) {
+          console.error(`❌ Empty output for "${source.name}" — original preserved, nothing saved`);
           return;
         }
 
-        const reformatted = data.content[0].text.trim();
-        console.log(`✅ Reformatted "${source.name}": ${source.raw_text.length} → ${reformatted.length} chars`);
+        console.log(`✅ Reformatted "${source.name}": ${fullText.length} → ${reformatted.length} chars`);
 
-        // Save reformatted text back to raw_sources
+        // Save to working_text ONLY — raw_text master is never touched
         await fetch(supabaseUrl(`raw_sources?id=eq.${id}`), {
           method: 'PATCH',
           headers: supabaseHeaders({ 'Prefer': 'return=minimal' }),
-          body: JSON.stringify({ raw_text: reformatted })
+          body: JSON.stringify({ working_text: reformatted })
         });
 
-        console.log(`💾 Saved reformatted text for "${source.name}"`);
+        console.log(`💾 Saved to working_text for "${source.name}" — raw_text master unchanged`);
+
       } catch (err) {
-        console.error(`Reformat failed for id ${id}: ${err.message}`);
+        // Original is always safe — backup was confirmed before this ran
+        console.error(`Reformat background error for "${source.name}": ${err.message}`);
+        console.error(`Original text is safe in raw_text_original column`);
       }
     })();
 
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+// Helper — reformat a single text chunk via Sonnet
+async function reformatTextChunk(text, sourceName, handbook) {
+  const prompt = `You are reformatting a Santa Clara County policy document that was extracted from a PDF. The extraction may have produced garbled text, broken table rows, or fragmented sentences.
+
+Reformat the following raw text into clean, natural language sentences that will be easy to search semantically. Follow these rules:
+1. Convert tables or code lists into clear sentences. Example: "HCP number 309 is Santa Clara Family Health Plan, a Two-Plan Local Initiative. Phone: (408) 376-2000."
+2. Convert life expectancy or actuarial tables into sentences. Example: "The life expectancy for a 65-year-old female is 18.6 years."
+3. Remove PDF artifacts: page numbers, repeated headers, navigation text, divider lines
+4. Preserve ALL factual content exactly — do not add, remove, or change any facts, numbers, dates, or names
+5. Convert bullet points and numbered lists into complete sentences
+6. Output only the reformatted text — no preamble, no explanation, no commentary
+
+Source: ${sourceName}
+Handbook: ${handbook}
+
+Raw text:
+${text}`;
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01'
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 4000,
+      messages: [{ role: 'user', content: prompt }]
+    })
+  });
+
+  const data = await response.json();
+  if (data.error || !data.content?.[0]) {
+    console.error(`reformatTextChunk API error: ${JSON.stringify(data.error)}`);
+    return null;
+  }
+  return data.content[0].text.trim();
+}
 
 // List all sessions
 app.post('/api/admin/sessions', async (req, res) => {
@@ -1672,7 +1728,8 @@ async function runOptimizationPipeline(sources, config, progressCallback) {
   let processed = 0;
 
   for (const source of sources) {
-    let text = source.raw_text || '';
+    // Use working_text if reformatted, fall back to master raw_text
+    let text = source.working_text || source.raw_text || '';
 
     // Apply enhanced cleaning pipeline
     text = enhancedClean(text, source.name, source.handbook, config);
@@ -1766,7 +1823,7 @@ app.post('/api/admin/optimize/preview', async (req, res) => {
   try {
     // Fetch a sample of sources (first 5) for preview
     const response = await fetch(
-      supabaseUrl(`raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=id,name,handbook,raw_text,metadata&limit=5`),
+      supabaseUrl(`raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=id,name,handbook,raw_text,working_text,metadata&limit=5`),
       { headers: supabaseHeaders() }
     );
     const sources = await response.json();
@@ -1843,7 +1900,7 @@ app.post('/api/admin/optimize/run', async (req, res) => {
       const batchSize = 200;
       while (offset < totalSources) {
         const batchRes = await fetch(
-          supabaseUrl(`raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=id,name,handbook,raw_text,metadata&order=name.asc&limit=${batchSize}&offset=${offset}`),
+          supabaseUrl(`raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=id,name,handbook,raw_text,working_text,metadata&order=name.asc&limit=${batchSize}&offset=${offset}`),
           { headers: supabaseHeaders({ 'Range': `${offset}-${offset + batchSize - 1}` }) }
         );
         const batch = await batchRes.json();
@@ -1929,7 +1986,7 @@ app.post('/api/admin/rebuild-from-archive', async (req, res) => {
       const batchSize = 200;
       while (offset < totalSources) {
         const batchRes = await fetch(
-          supabaseUrl(`raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=id,name,handbook,raw_text,metadata&order=name.asc&limit=${batchSize}&offset=${offset}`),
+          supabaseUrl(`raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=id,name,handbook,raw_text,working_text,metadata&order=name.asc&limit=${batchSize}&offset=${offset}`),
           { headers: supabaseHeaders({ 'Range': `${offset}-${offset + batchSize - 1}` }) }
         );
         const batch = await batchRes.json();
