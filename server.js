@@ -731,6 +731,263 @@ app.post('/api/admin/export-session', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Source quality scanner ─────────────────────────────────────────────────
+
+function scoreSourceQuality(raw_text, name) {
+  if (!raw_text || raw_text.trim().length === 0) {
+    return { score: 0, flags: ['empty'], wordCount: 0, lineCount: 0, avgLineLen: 0, numericDensity: 0 };
+  }
+
+  const lines = raw_text.split('\n').filter(l => l.trim().length > 0);
+  const words = raw_text.split(/\s+/).filter(w => w.length > 0);
+  const chars = raw_text.replace(/\s/g, '').length;
+
+  const lineCount = lines.length;
+  const wordCount = words.length;
+  const avgLineLen = lineCount > 0 ? chars / lineCount : 0;
+  const wordsPerLine = lineCount > 0 ? wordCount / lineCount : 0;
+
+  // Numeric density — what fraction of words are numbers or codes
+  const numericWords = words.filter(w => /^\d+[\d\-\.]*$/.test(w) || /^[\d]{3,}$/.test(w)).length;
+  const numericDensity = wordCount > 0 ? numericWords / wordCount : 0;
+
+  // Short line ratio — what fraction of lines are very short (under 5 words)
+  const shortLines = lines.filter(l => l.trim().split(/\s+/).length < 5).length;
+  const shortLineRatio = lineCount > 0 ? shortLines / lineCount : 0;
+
+  // Repetitive header ratio — lines that look like PDF headers/footers
+  const headerPattern = /^(page \d+|mcp code dir|\d+\s*$|part \d+|updated:|page updated)/i;
+  const headerLines = lines.filter(l => headerPattern.test(l.trim())).length;
+  const headerRatio = lineCount > 0 ? headerLines / lineCount : 0;
+
+  // Flag conditions
+  const flags = [];
+  if (wordCount < 50) flags.push('too_short');
+  if (wordsPerLine < 4) flags.push('low_words_per_line');
+  if (numericDensity > 0.20) flags.push('high_numeric_density');
+  if (shortLineRatio > 0.50) flags.push('high_short_line_ratio');
+  if (headerRatio > 0.10) flags.push('high_header_noise');
+  if (avgLineLen < 15) flags.push('short_avg_line');
+
+  // Quality score 0-100 (higher = better quality)
+  let score = 100;
+  if (flags.includes('too_short')) score -= 40;
+  if (flags.includes('low_words_per_line')) score -= 25;
+  if (flags.includes('high_numeric_density')) score -= 20;
+  if (flags.includes('high_short_line_ratio')) score -= 20;
+  if (flags.includes('high_header_noise')) score -= 15;
+  if (flags.includes('short_avg_line')) score -= 15;
+  score = Math.max(0, score);
+
+  return { score, flags, wordCount, lineCount, avgLineLen: Math.round(avgLineLen), wordsPerLine: Math.round(wordsPerLine * 10) / 10, numericDensity: Math.round(numericDensity * 100), shortLineRatio: Math.round(shortLineRatio * 100) };
+}
+
+app.post('/api/admin/scan-quality', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  const { handbook, limit = 50 } = req.body;
+
+  try {
+    // Get total count
+    const countUrl = handbook
+      ? `raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=count`
+      : 'raw_sources?select=count';
+    const countRes = await fetch(supabaseUrl(countUrl), {
+      headers: supabaseHeaders({ 'Prefer': 'count=exact', 'Range': '0-0' })
+    });
+    const total = parseInt(countRes.headers.get('content-range')?.split('/')[1] || '0');
+
+    // Fetch all sources in batches — only fields needed for scoring
+    let allSources = [];
+    let offset = 0;
+    const batchSize = 200;
+    const baseUrl = handbook
+      ? `raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=id,name,handbook,raw_text,working_text&order=name.asc`
+      : 'raw_sources?select=id,name,handbook,raw_text,working_text&order=handbook.asc,name.asc';
+
+    while (offset < total) {
+      const batchRes = await fetch(
+        supabaseUrl(`${baseUrl}&limit=${batchSize}&offset=${offset}`),
+        { headers: supabaseHeaders({ 'Range': `${offset}-${offset + batchSize - 1}` }) }
+      );
+      const batch = await batchRes.json();
+      if (!Array.isArray(batch) || batch.length === 0) break;
+      allSources = allSources.concat(batch);
+      offset += batchSize;
+    }
+
+    // Score each source
+    const scored = allSources.map(src => {
+      // Use working_text if available, fall back to raw_text (master)
+      const activeText = src.working_text || src.raw_text || '';
+      const quality = scoreSourceQuality(activeText, src.name);
+      return {
+        id: src.id,
+        name: src.name,
+        handbook: src.handbook,
+        hasWorkingText: !!src.working_text,
+        ...quality
+      };
+    });
+
+    // Sort by score ascending (worst first)
+    scored.sort((a, b) => a.score - b.score);
+
+    // Summary stats
+    const flagged = scored.filter(s => s.flags.length > 0);
+    const byHandbook = {};
+    scored.forEach(s => {
+      if (!byHandbook[s.handbook]) byHandbook[s.handbook] = { total: 0, flagged: 0, avgScore: 0, scores: [] };
+      byHandbook[s.handbook].total++;
+      byHandbook[s.handbook].scores.push(s.score);
+      if (s.flags.length > 0) byHandbook[s.handbook].flagged++;
+    });
+    Object.values(byHandbook).forEach(hb => {
+      hb.avgScore = Math.round(hb.scores.reduce((a, b) => a + b, 0) / hb.scores.length);
+      delete hb.scores;
+    });
+
+    res.json({
+      total: allSources.length,
+      flagged: flagged.length,
+      flaggedPct: Math.round(flagged.length / allSources.length * 100),
+      byHandbook,
+      worstSources: scored.slice(0, limit), // worst quality first
+      scannedAt: new Date().toISOString()
+    });
+
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// AI reformat a single source using Sonnet
+app.post('/api/admin/reformat-source', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  const { id } = req.body;
+  if (!id) return res.status(400).json({ error: 'id required' });
+
+  try {
+    // Fetch the source
+    const srcRes = await fetch(supabaseUrl(`raw_sources?id=eq.${id}&select=*`), {
+      headers: supabaseHeaders()
+    });
+    const sources = await srcRes.json();
+    if (!Array.isArray(sources) || !sources[0]) return res.status(404).json({ error: 'Source not found' });
+    const source = sources[0];
+
+    // raw_text is the permanent master — never touched
+    // working_text is what we write to
+    // No backup needed since master is never modified
+
+    // Respond to client — master raw_text is never touched
+    res.json({
+      success: true,
+      message: `Reformatting "${source.name}" in background. Master raw_text preserved.`,
+      id,
+      charCount: source.raw_text?.length || 0,
+      hasExistingWorkingText: !!source.working_text
+    });
+
+    (async () => {
+      try {
+        // Use working_text if already reformatted, otherwise use master raw_text
+        const fullText = source.working_text || source.raw_text || '';
+        console.log(`🔄 Reformatting: "${source.name}" (${source.handbook}) — ${fullText.length} chars${source.working_text ? ' [from working_text]' : ' [from raw_text master]'}`);
+
+        const CHUNK_LIMIT = 5500;
+        let reformattedParts = [];
+
+        if (fullText.length <= CHUNK_LIMIT) {
+          reformattedParts = [await reformatTextChunk(fullText, source.name, source.handbook)];
+        } else {
+          // Split on paragraph boundaries to avoid mid-sentence cuts
+          const paragraphs = fullText.split(/\n\n+/);
+          let currentBatch = '';
+          let batchNum = 0;
+
+          for (const para of paragraphs) {
+            if ((currentBatch + para).length > CHUNK_LIMIT && currentBatch.length > 0) {
+              batchNum++;
+              console.log(`   Batch ${batchNum} (${currentBatch.length} chars)`);
+              reformattedParts.push(await reformatTextChunk(currentBatch, source.name, source.handbook));
+              await sleep(500);
+              currentBatch = para;
+            } else {
+              currentBatch += (currentBatch ? '\n\n' : '') + para;
+            }
+          }
+          if (currentBatch) {
+            batchNum++;
+            reformattedParts.push(await reformatTextChunk(currentBatch, source.name, source.handbook));
+          }
+        }
+
+        const reformatted = reformattedParts.filter(Boolean).join('\n\n');
+
+        if (!reformatted) {
+          console.error(`❌ Empty output for "${source.name}" — original preserved, nothing saved`);
+          return;
+        }
+
+        console.log(`✅ Reformatted "${source.name}": ${fullText.length} → ${reformatted.length} chars`);
+
+        // Save to working_text ONLY — raw_text master is never touched
+        await fetch(supabaseUrl(`raw_sources?id=eq.${id}`), {
+          method: 'PATCH',
+          headers: supabaseHeaders({ 'Prefer': 'return=minimal' }),
+          body: JSON.stringify({ working_text: reformatted })
+        });
+
+        console.log(`💾 Saved to working_text for "${source.name}" — raw_text master unchanged`);
+
+      } catch (err) {
+        // Original is always safe — backup was confirmed before this ran
+        console.error(`Reformat background error for "${source.name}": ${err.message}`);
+        console.error(`Original text is safe in raw_text_original column`);
+      }
+    })();
+
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Helper — reformat a single text chunk via Sonnet
+async function reformatTextChunk(text, sourceName, handbook) {
+  const prompt = `You are reformatting a Santa Clara County policy document that was extracted from a PDF. The extraction may have produced garbled text, broken table rows, or fragmented sentences.
+
+Reformat the following raw text into clean, natural language sentences that will be easy to search semantically. Follow these rules:
+1. Convert tables or code lists into clear sentences. Example: "HCP number 309 is Santa Clara Family Health Plan, a Two-Plan Local Initiative. Phone: (408) 376-2000."
+2. Convert life expectancy or actuarial tables into sentences. Example: "The life expectancy for a 65-year-old female is 18.6 years."
+3. Remove PDF artifacts: page numbers, repeated headers, navigation text, divider lines
+4. Preserve ALL factual content exactly — do not add, remove, or change any facts, numbers, dates, or names
+5. Convert bullet points and numbered lists into complete sentences
+6. Output only the reformatted text — no preamble, no explanation, no commentary
+
+Source: ${sourceName}
+Handbook: ${handbook}
+
+Raw text:
+${text}`;
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01'
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 4000,
+      messages: [{ role: 'user', content: prompt }]
+    })
+  });
+
+  const data = await response.json();
+  if (data.error || !data.content?.[0]) {
+    console.error(`reformatTextChunk API error: ${JSON.stringify(data.error)}`);
+    return null;
+  }
+  return data.content[0].text.trim();
+}
+
 // List all sessions
 app.post('/api/admin/sessions', async (req, res) => {
   if (!authCheck(req, res)) return;
@@ -1231,13 +1488,22 @@ app.get('/api/health', (req, res) => {
 
 function removePdfNoise(text) {
   return text
+    // Page numbers
     .replace(/Page \d+ of \d+/gi, '')
     .replace(/^\d+\s*$/gm, '')
+    // County/DEBS headers
     .replace(/^.{0,60}(County|DEBS|Confidential|Internal Use|Santa Clara).{0,60}$/gm, '')
-    .replace(/^(Previous|Next|Home|Back|Top|Table of Contents)\s*$/gmi, '')
+    // Navigation text
+    .replace(/^(Previous|Next|Home|Back|Top|Table of Contents|Skip to|Jump to|Print|Share|Email|Download)\s*.*$/gmi, '')
+    // URL-like text
+    .replace(/https?:\/\/\S+/g, '')
+    // Repeated punctuation dividers
     .replace(/_{3,}/g, '')
     .replace(/─{3,}/g, '')
     .replace(/={3,}/g, '')
+    .replace(/\*{3,}/g, '')
+    .replace(/-{5,}/g, '')
+    // Whitespace cleanup
     .replace(/\t+/g, ' ')
     .replace(/ {3,}/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
@@ -1249,6 +1515,133 @@ function removeShortLines(text, minWords = 5) {
     const words = line.trim().split(/\s+/).filter(w => w.length > 0);
     return words.length === 0 || words.length >= minWords;
   }).join('\n');
+}
+
+// Detect if a line looks like a table row (mostly numbers, codes, or very short fields)
+function isTableRow(line) {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+  // Lines that are mostly numbers/codes separated by spaces or pipes
+  const codePattern = /^[\d\w]{1,10}(\s{2,}|\||\t)[\w\s]{1,50}$/;
+  const pipeRow = /\|.+\|/;
+  return codePattern.test(trimmed) || pipeRow.test(trimmed);
+}
+
+// Enrich table content with context so it embeds semantically
+function enrichTableContent(text, sourceName, handbook) {
+  const lines = text.split('\n');
+  const enriched = [];
+  let inTableBlock = false;
+  let tableContext = '';
+  let tableLines = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const prevLine = i > 0 ? lines[i-1] : '';
+    const nextLine = i < lines.length - 1 ? lines[i+1] : '';
+
+    if (isTableRow(line)) {
+      if (!inTableBlock) {
+        inTableBlock = true;
+        // Use preceding non-table line as context header
+        tableContext = enriched.length > 0
+          ? enriched[enriched.length - 1].trim()
+          : `${sourceName} reference data`;
+        tableLines = [];
+      }
+      tableLines.push(line.trim());
+    } else {
+      if (inTableBlock && tableLines.length > 0) {
+        // Convert table block to natural language sentences
+        const contextPrefix = tableContext
+          ? `The following ${handbook} codes and values are from "${tableContext}":`
+          : `The following codes appear in ${sourceName}:`;
+        enriched.push(contextPrefix);
+        tableLines.forEach(tl => {
+          // Try to split code from description
+          const parts = tl.split(/\s{2,}|\t|\|/).map(p => p.trim()).filter(Boolean);
+          if (parts.length >= 2) {
+            enriched.push(`Code ${parts[0]}: ${parts.slice(1).join(' ')}.`);
+          } else {
+            enriched.push(tl);
+          }
+        });
+        enriched.push('');
+        tableLines = [];
+        inTableBlock = false;
+        tableContext = '';
+      }
+      enriched.push(line);
+    }
+  }
+
+  // Flush any remaining table lines
+  if (inTableBlock && tableLines.length > 0) {
+    const contextPrefix = tableContext
+      ? `The following ${handbook} codes and values are from "${tableContext}":`
+      : `The following codes appear in ${sourceName}:`;
+    enriched.push(contextPrefix);
+    tableLines.forEach(tl => {
+      const parts = tl.split(/\s{2,}|\t|\|/).map(p => p.trim()).filter(Boolean);
+      if (parts.length >= 2) {
+        enriched.push(`Code ${parts[0]}: ${parts.slice(1).join(' ')}.`);
+      } else {
+        enriched.push(tl);
+      }
+    });
+  }
+
+  return enriched.join('\n');
+}
+
+// Convert bullet points and lists into complete sentences
+function enrichListContent(text, sourceName) {
+  return text
+    // Bullet points → complete sentences
+    .replace(/^[•·▪▸►‣⁃\-\*]\s+(.+)$/gm, (match, content) => {
+      const trimmed = content.trim();
+      // Already a sentence
+      if (trimmed.endsWith('.') || trimmed.endsWith(':')) return trimmed;
+      return trimmed + '.';
+    })
+    // Numbered lists — preserve but ensure sentence ending
+    .replace(/^\d+[\.\)]\s+(.+)$/gm, (match, content) => {
+      const trimmed = content.trim();
+      if (trimmed.endsWith('.') || trimmed.endsWith(':')) return trimmed;
+      return trimmed + '.';
+    });
+}
+
+// Full enhanced cleaning pipeline
+function enhancedClean(text, sourceName, handbook, config) {
+  const {
+    removePageNumbers = true,
+    removeHeaders = true,
+    collapseWhitespace = true,
+    removeShortLinesEnabled = false,
+    removeShortLinesMin = 5
+  } = config;
+
+  // Step 1: Basic noise removal
+  if (removePageNumbers || removeHeaders || collapseWhitespace) {
+    text = removePdfNoise(text);
+  }
+
+  // Step 2: Table enrichment — converts code tables to natural language
+  text = enrichTableContent(text, sourceName, handbook);
+
+  // Step 3: List enrichment — converts bullets to sentences
+  text = enrichListContent(text, sourceName);
+
+  // Step 4: Short line removal (optional)
+  if (removeShortLinesEnabled) {
+    text = removeShortLines(text, removeShortLinesMin);
+  }
+
+  // Step 5: Final whitespace cleanup
+  text = text.replace(/\n{3,}/g, '\n\n').trim();
+
+  return text;
 }
 
 function buildChunks(text, sourceName, handbook, category, chunkSize, chunkOverlap, minChunkWords, sourceLabel = '') {
@@ -1335,15 +1728,11 @@ async function runOptimizationPipeline(sources, config, progressCallback) {
   let processed = 0;
 
   for (const source of sources) {
-    let text = source.raw_text || '';
+    // Use working_text if reformatted, fall back to master raw_text
+    let text = source.working_text || source.raw_text || '';
 
-    // Apply noise removal
-    if (removePageNumbers || removeHeaders || collapseWhitespace) {
-      text = removePdfNoise(text);
-    }
-    if (removeShortLinesEnabled) {
-      text = removeShortLines(text, removeShortLinesMin);
-    }
+    // Apply enhanced cleaning pipeline
+    text = enhancedClean(text, source.name, source.handbook, config);
 
     if (!text.trim() || text.split(/\s+/).length < minChunkWords) {
       processed++;
@@ -1434,7 +1823,7 @@ app.post('/api/admin/optimize/preview', async (req, res) => {
   try {
     // Fetch a sample of sources (first 5) for preview
     const response = await fetch(
-      supabaseUrl(`raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=id,name,handbook,raw_text,metadata&limit=5`),
+      supabaseUrl(`raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=id,name,handbook,raw_text,working_text,metadata&limit=5`),
       { headers: supabaseHeaders() }
     );
     const sources = await response.json();
@@ -1511,7 +1900,7 @@ app.post('/api/admin/optimize/run', async (req, res) => {
       const batchSize = 200;
       while (offset < totalSources) {
         const batchRes = await fetch(
-          supabaseUrl(`raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=id,name,handbook,raw_text,metadata&order=name.asc&limit=${batchSize}&offset=${offset}`),
+          supabaseUrl(`raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=id,name,handbook,raw_text,working_text,metadata&order=name.asc&limit=${batchSize}&offset=${offset}`),
           { headers: supabaseHeaders({ 'Range': `${offset}-${offset + batchSize - 1}` }) }
         );
         const batch = await batchRes.json();
@@ -1597,7 +1986,7 @@ app.post('/api/admin/rebuild-from-archive', async (req, res) => {
       const batchSize = 200;
       while (offset < totalSources) {
         const batchRes = await fetch(
-          supabaseUrl(`raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=id,name,handbook,raw_text,metadata&order=name.asc&limit=${batchSize}&offset=${offset}`),
+          supabaseUrl(`raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=id,name,handbook,raw_text,working_text,metadata&order=name.asc&limit=${batchSize}&offset=${offset}`),
           { headers: supabaseHeaders({ 'Range': `${offset}-${offset + batchSize - 1}` }) }
         );
         const batch = await batchRes.json();

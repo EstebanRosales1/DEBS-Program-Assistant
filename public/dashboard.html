@@ -230,6 +230,7 @@ tr:hover td{background:rgba(247,243,235,.5);}
     <button class="tab" onclick="showTab('versions')">📦 Versions</button>
     <button class="tab" onclick="showTab('ratings')">⭐ Ratings</button>
     <button class="tab" onclick="showTab('optimize')">🔧 Optimize</button>
+    <button class="tab" onclick="showTab('quality')">🔍 Quality</button>
   </div>
 
   <div class="content">
@@ -637,6 +638,62 @@ tr:hover td{background:rgba(247,243,235,.5);}
       </div>
     </div>
 
+    <!-- ══ TAB: QUALITY ══ -->
+    <div class="panel" id="panel-quality">
+      <div class="grid-2">
+
+        <!-- Scanner controls -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-icon icon-db">🔍</div>
+            <div><div class="card-title">Source Quality Scanner</div><div class="card-desc">Identifies sources with poor PDF extraction, broken tables, or noise</div></div>
+          </div>
+
+          <label>Filter by Handbook</label>
+          <select id="quality-handbook" style="margin-bottom:.8rem;">
+            <option value="">All Handbooks</option>
+          </select>
+
+          <label>Show worst</label>
+          <select id="quality-limit" style="margin-bottom:1rem;">
+            <option value="25">25 sources</option>
+            <option value="50" selected>50 sources</option>
+            <option value="100">100 sources</option>
+            <option value="999">All flagged</option>
+          </select>
+
+          <button class="btn" onclick="runQualityScan()">🔍 Scan Sources</button>
+          <div class="status" id="quality-status"></div>
+
+          <!-- Summary stats -->
+          <div id="quality-summary" style="display:none;margin-top:1.2rem;">
+            <div style="font-family:'DM Mono',monospace;font-size:.7rem;color:var(--muted);text-transform:uppercase;margin-bottom:.6rem;">Scan Results</div>
+            <div class="stats-grid" style="grid-template-columns:repeat(3,1fr);">
+              <div class="stat-box"><div class="stat-num" id="q-total">—</div><div class="stat-label">Scanned</div></div>
+              <div class="stat-box"><div class="stat-num" id="q-flagged" style="color:#e74c3c;">—</div><div class="stat-label">Flagged</div></div>
+              <div class="stat-box"><div class="stat-num" id="q-pct">—</div><div class="stat-label">% Issues</div></div>
+            </div>
+          </div>
+
+          <!-- By handbook breakdown -->
+          <div id="quality-by-handbook" style="display:none;margin-top:1rem;">
+            <div style="font-family:'DM Mono',monospace;font-size:.7rem;color:var(--muted);text-transform:uppercase;margin-bottom:.6rem;">By Handbook</div>
+            <div id="quality-handbook-rows"></div>
+          </div>
+        </div>
+
+        <!-- Flagged sources list -->
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+            <div style="font-family:'DM Serif Display',serif;font-size:1rem;color:var(--navy);">Flagged Sources</div>
+            <div style="font-size:.72rem;font-family:'DM Mono',monospace;color:var(--muted);" id="quality-list-count"></div>
+          </div>
+          <div id="quality-list"><div class="empty-state">Run a scan to see flagged sources</div></div>
+        </div>
+
+      </div>
+    </div>
+
   </div><!-- end content -->
 </div><!-- end shell -->
 
@@ -719,7 +776,7 @@ function logout() {
 // ══════════════════════════════════════════════════════
 function showTab(name) {
   document.querySelectorAll('.tab').forEach((t,i)=>{
-    const names=['add','loader','kb','data','versions','ratings','optimize'];
+    const names=['add','loader','kb','data','versions','ratings','optimize','quality'];
     t.classList.toggle('active', names[i]===name);
   });
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
@@ -729,6 +786,7 @@ function showTab(name) {
   if (name==='versions') loadVersions();
   if (name==='ratings') loadRatings();
   if (name==='optimize') loadHandbooks();
+  if (name==='quality') loadQualityHandbooks();
 }
 
 // ══════════════════════════════════════════════════════
@@ -759,7 +817,127 @@ async function apiFetch(url, body) {
 }
 
 // ══════════════════════════════════════════════════════
-// OPTIMIZATION — Phase 1: UI only
+// SOURCE QUALITY SCANNER
+// ══════════════════════════════════════════════════════
+
+async function loadQualityHandbooks() {
+  try {
+    const data = await apiFetch('/api/admin/archive-summary', {});
+    const select = document.getElementById('quality-handbook');
+    const current = select.value;
+    select.innerHTML = '<option value="">All Handbooks</option>';
+    (data.summary || []).forEach(r => {
+      const opt = document.createElement('option');
+      opt.value = r.handbook;
+      opt.textContent = `${r.handbook} (${r.sources} sources)`;
+      if (r.handbook === current) opt.selected = true;
+      select.appendChild(opt);
+    });
+  } catch(err) { console.error('Failed to load quality handbooks:', err.message); }
+}
+
+async function runQualityScan() {
+  const handbook = document.getElementById('quality-handbook').value;
+  const limit = parseInt(document.getElementById('quality-limit').value);
+  setStatus('quality-status', 'loading', '⏳ Scanning sources...');
+  document.getElementById('quality-summary').style.display = 'none';
+  document.getElementById('quality-by-handbook').style.display = 'none';
+  document.getElementById('quality-list').innerHTML = '<div class="empty-state">Scanning...</div>';
+
+  try {
+    const data = await apiFetch('/api/admin/scan-quality', { handbook: handbook || undefined, limit });
+    if (data.error) throw new Error(data.error);
+
+    // Summary stats
+    document.getElementById('q-total').textContent = data.total?.toLocaleString() || '—';
+    document.getElementById('q-flagged').textContent = data.flagged?.toLocaleString() || '—';
+    document.getElementById('q-pct').textContent = data.flaggedPct + '%';
+    document.getElementById('quality-summary').style.display = 'block';
+
+    // By handbook breakdown
+    const hbRows = document.getElementById('quality-handbook-rows');
+    hbRows.innerHTML = Object.entries(data.byHandbook || {})
+      .sort((a, b) => a[1].avgScore - b[1].avgScore)
+      .map(([hb, d]) => `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--cream-dark);font-size:.8rem;">
+          <span style="font-weight:500;">${hb}</span>
+          <span style="font-family:'DM Mono',monospace;font-size:.72rem;color:${d.avgScore < 60 ? '#e74c3c' : d.avgScore < 80 ? '#f39c12' : 'var(--muted)'};">
+            ${d.flagged}/${d.total} flagged · avg ${d.avgScore}
+          </span>
+        </div>`).join('');
+    document.getElementById('quality-by-handbook').style.display = 'block';
+
+    // Flagged sources list
+    const sources = data.worstSources || [];
+    document.getElementById('quality-list-count').textContent = `${sources.length} shown`;
+
+    if (sources.length === 0) {
+      document.getElementById('quality-list').innerHTML = '<div class="empty-state" style="color:#27ae60;">✅ No quality issues found</div>';
+    } else {
+      document.getElementById('quality-list').innerHTML = sources.map(s => {
+        const scoreColor = s.score < 40 ? '#e74c3c' : s.score < 70 ? '#f39c12' : '#27ae60';
+        const flagLabels = {
+          too_short: 'Too short',
+          low_words_per_line: 'Broken lines',
+          high_numeric_density: 'Table/codes',
+          high_short_line_ratio: 'Fragmented',
+          high_header_noise: 'PDF noise',
+          short_avg_line: 'Short lines',
+          empty: 'Empty'
+        };
+        const flagHtml = s.flags.map(f =>
+          `<span style="background:${s.score < 40 ? '#fde8e8' : '#fff3cd'};color:${s.score < 40 ? '#c0392b' : '#856404'};padding:1px 6px;border-radius:4px;font-size:.65rem;font-family:'DM Mono',monospace;">${flagLabels[f] || f}</span>`
+        ).join(' ');
+
+        return `<div style="border:1px solid var(--cream-dark);border-radius:10px;padding:10px 14px;margin-bottom:.6rem;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+            <div style="flex:1;min-width:0;">
+              <div style="font-weight:600;font-size:.85rem;color:var(--navy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${s.name}</div>
+              <div style="font-size:.72rem;color:var(--muted);font-family:'DM Mono',monospace;margin-top:2px;">${s.handbook} · ${s.wordCount} words · ${s.wordsPerLine}w/line</div>
+              <div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:3px;">${flagHtml}</div>
+            </div>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;">
+              <div style="font-family:'DM Mono',monospace;font-size:.9rem;font-weight:700;color:${scoreColor};">${s.score}</div>
+              <button class="abtn abtn-edit" onclick="reformatSource(${s.id}, '${s.name.replace(/'/g, "\\'")}', this)" style="${s.hasWorkingText ? 'background:var(--success);color:#fff;' : ''}">
+                ${s.hasWorkingText ? '✅ Re-reformat' : '✨ Reformat'}
+              </button>
+            </div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+
+    setStatus('quality-status', 'success', `✅ Scan complete — ${data.flagged} of ${data.total} sources flagged`);
+  } catch(err) {
+    setStatus('quality-status', 'error', '❌ ' + err.message);
+    document.getElementById('quality-list').innerHTML = '<div class="empty-state">Scan failed</div>';
+  }
+}
+
+async function reformatSource(id, name, btn) {
+  if (!confirm(
+    `✨ Reformat "${name}" using AI?\n\n` +
+    `Sonnet will rewrite this source as clean natural language.\n\n` +
+    `✅ SAFE: Result saves to working_text only.\n` +
+    `Your master raw_text is never touched.\n\n` +
+    `After reformatting, re-run optimization on this handbook to update chunks.\n\n` +
+    `Proceed?`
+  )) return;
+  btn.disabled = true;
+  btn.textContent = '⏳';
+  try {
+    const data = await apiFetch('/api/admin/reformat-source', { id });
+    if (data.error) throw new Error(data.error);
+    btn.textContent = '✅ Done';
+    btn.style.background = 'var(--success)';
+    btn.style.color = '#fff';
+    btn.title = 'Reformatted — re-run optimization to update chunks';
+  } catch(err) {
+    btn.textContent = '❌ Error';
+    btn.disabled = false;
+    alert('Reformat failed: ' + err.message);
+  }
+}
 // ══════════════════════════════════════════════════════
 
 // Load live handbooks from archive into dropdown
@@ -792,6 +970,10 @@ async function loadHandbooks() {
     }
   }
 }
+
+// ══════════════════════════════════════════════════════
+// OPTIMIZATION — Phase 1: UI only
+// ══════════════════════════════════════════════════════
 
 const PRESETS = {
   precision:     { chunkSize:250, overlap:0,   minWords:25, intro:'generic' },
