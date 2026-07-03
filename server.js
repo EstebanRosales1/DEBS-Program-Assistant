@@ -226,17 +226,16 @@ async function processAndIngest(rawText, name, handbook, sourceType, sourceUrl =
 // Postgres FTS ignores tokens under 3 chars (M3, B9, etc.)
 // and short numeric codes may not stem correctly
 function extractShortCodes(queryText) {
-  const STOP_WORDS = new Set(['a','i','is','it','in','of','to','the','for','and','or','how','do','what','does','can','my','me','who','why','when','are','was','be','an','at','by','if','no','so','up','we','he','she','they','his','her','its','has','had','not','but','this','that','with','from','have','will','would','could','should','may','which','their','our','your','you','he','she','we','they','did','get','got','set']);
+  const STOP_WORDS = new Set(['a','i','is','it','in','of','to','the','for','and','or','how','do','what','does','can','my','me','who','why','when','are','was','be','an','at','by','if','no','so','up','we','he','she','they','his','her','its','has','had','not','but','this','that','with','from','have','will','would','could','should','may','which','their','our','your','you','he','she','we','they','did','get','got','set','mean','meds','alert','code','number','screen','medi-cal','calfresh','calworks','calwor']);
   const tokens = queryText.split(/\s+/);
   return tokens.filter(t => {
+    // Strip punctuation for length/type checks but keep original for ILIKE
     const clean = t.replace(/[^a-zA-Z0-9]/g, '');
-    // Must be 1-4 chars, alphanumeric only, not a common stop word
     return clean.length >= 1 &&
-           clean.length <= 4 &&
-           /^[a-zA-Z0-9]+$/.test(clean) &&
+           clean.length <= 8 &&
            !STOP_WORDS.has(clean.toLowerCase()) &&
-           // Must contain at least one digit OR be all caps (code-like)
-           (/\d/.test(clean) || clean === clean.toUpperCase());
+           // Must contain digit OR be all-caps OR contain hyphen (MEDS data elements like HCP-NUM)
+           (/\d/.test(clean) || clean === clean.toUpperCase() || t.includes('-'));
   });
 }
 
