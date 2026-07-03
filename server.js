@@ -243,9 +243,6 @@ async function keywordSearch(queryText, matchCount = 10) {
 
 // ─── Hybrid search — semantic + keyword merged ─────────────────────────────
 async function searchHandbook(embedding, programFocus = '', queryText = '') {
-  const SEMANTIC_WEIGHT = 0.7;
-  const KEYWORD_WEIGHT = 0.3;
-
   // Run both searches in parallel
   const matchCount = programFocus ? 10 : 8;
   const [semanticResults, keywordResults] = await Promise.all([
@@ -312,14 +309,20 @@ async function searchHandbook(embedding, programFocus = '', queryText = '') {
     }
   }
 
-  // Compute hybrid score with optional program focus boost
+  // Compute hybrid score — use semantic as base, keyword as additive boost
+  // This preserves semantic scores while giving keyword matches a meaningful lift
   const ranked = Object.values(combined).map(item => {
-    const hybridScore = (SEMANTIC_WEIGHT * item.semantic_score) + (KEYWORD_WEIGHT * item.keyword_score);
+    // Keyword boost: up to +0.15 for a perfect keyword match
+    const keywordBoost = item.keyword_score * 0.15;
+    // Focus boost: +0.05 for matching the worker's program focus
     const focusBoost = (programFocus && item.metadata?.handbook === programFocus) ? 0.05 : 0;
+    // Final score: semantic base + keyword boost + focus boost
+    const finalScore = item.semantic_score + keywordBoost + focusBoost;
     return {
       ...item,
-      similarity: hybridScore + focusBoost,
-      _hybridScore: hybridScore,
+      similarity: Math.min(finalScore, 1.0), // cap at 1.0
+      _semanticScore: item.semantic_score,
+      _keywordBoost: keywordBoost,
       _focusBoosted: focusBoost > 0
     };
   });
