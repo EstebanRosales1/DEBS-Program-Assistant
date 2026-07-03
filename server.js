@@ -222,6 +222,42 @@ async function processAndIngest(rawText, name, handbook, sourceType, sourceUrl =
 
 // ─── Search ────────────────────────────────────────────────────────────────
 
+// ─── Detect short codes that FTS can't handle ──────────────────────────────
+// Postgres FTS ignores tokens under 3 chars (M3, B9, etc.)
+// and short numeric codes may not stem correctly
+function extractShortCodes(queryText) {
+  const STOP_WORDS = new Set(['a','i','is','it','in','of','to','the','for','and','or','how','do','what','does','can','my','me','who','why','when','are','was','be','an','at','by','if','no','so','up','we','he','she','they','his','her','its','has','had','not','but','this','that','with','from','have','will','would','could','should','may','which','their','our','your','you','he','she','we','they','did','get','got','set']);
+  const tokens = queryText.split(/\s+/);
+  return tokens.filter(t => {
+    const clean = t.replace(/[^a-zA-Z0-9]/g, '');
+    // Must be 1-4 chars, alphanumeric only, not a common stop word
+    return clean.length >= 1 &&
+           clean.length <= 4 &&
+           /^[a-zA-Z0-9]+$/.test(clean) &&
+           !STOP_WORDS.has(clean.toLowerCase()) &&
+           // Must contain at least one digit OR be all caps (code-like)
+           (/\d/.test(clean) || clean === clean.toUpperCase());
+  });
+}
+
+// ─── ILIKE search for exact code matching ──────────────────────────────────
+async function ilikeSearch(queryText, matchCount = 10) {
+  try {
+    const response = await fetch(supabaseUrl('rpc/search_documents_ilike'), {
+      method: 'POST',
+      headers: supabaseHeaders(),
+      body: JSON.stringify({ query_text: queryText, match_count: matchCount })
+    });
+    const text = await response.text();
+    if (!text || text.trim() === '') return [];
+    const results = JSON.parse(text);
+    return Array.isArray(results) ? results : [];
+  } catch (err) {
+    console.error(`ILIKE search error: ${err.message}`);
+    return [];
+  }
+}
+
 // ─── Keyword search via Postgres full-text search ──────────────────────────
 async function keywordSearch(queryText, matchCount = 10) {
   try {
@@ -235,7 +271,6 @@ async function keywordSearch(queryText, matchCount = 10) {
     const results = JSON.parse(text);
     return Array.isArray(results) ? results : [];
   } catch (err) {
-    // Keyword search failure is non-fatal — fall back to semantic only
     console.error(`Keyword search error: ${err.message}`);
     return [];
   }
@@ -243,7 +278,11 @@ async function keywordSearch(queryText, matchCount = 10) {
 
 // ─── Hybrid search — semantic + keyword merged ─────────────────────────────
 async function searchHandbook(embedding, programFocus = '', queryText = '') {
-  // Run both searches in parallel
+  // Detect short codes that FTS can't handle (M3, 309, SAR, etc.)
+  const shortCodes = queryText ? extractShortCodes(queryText) : [];
+  const hasShortCodes = shortCodes.length > 0;
+
+  // Run searches in parallel — use ILIKE for short codes, FTS for longer queries
   const matchCount = programFocus ? 10 : 8;
   const [semanticResults, keywordResults] = await Promise.all([
     // Semantic vector search
@@ -255,8 +294,12 @@ async function searchHandbook(embedding, programFocus = '', queryText = '') {
       try { const d = JSON.parse(t); return Array.isArray(d) ? d : []; }
       catch { return []; }
     }),
-    // Keyword full-text search
-    queryText ? keywordSearch(queryText, 10) : Promise.resolve([])
+    // Keyword search — ILIKE for short codes, FTS for natural language
+    queryText
+      ? hasShortCodes
+        ? ilikeSearch(shortCodes.join(' '), 10)
+        : keywordSearch(queryText, 10)
+      : Promise.resolve([])
   ]);
 
   // If no keyword results fall back to pure semantic
