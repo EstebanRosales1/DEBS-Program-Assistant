@@ -1416,6 +1416,31 @@ async function deleteSource(source) {
 // ══════════════════════════════════════════════════════
 // DATA MANAGER
 // ══════════════════════════════════════════════════════
+async function exportSource(id, name) {
+  try {
+    const res = await fetch('/api/admin/export-source', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminKey, id })
+    });
+    const text = await res.text();
+    if (text.trim().startsWith('<')) throw new Error('Server error');
+    const data = JSON.parse(text);
+    if (data.error) throw new Error(data.error);
+
+    // Download as text file
+    const blob = new Blob([data.raw_text], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name.replace(/[^a-z0-9]/gi, '_') + '_raw.txt';
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch(err) {
+    alert('Export failed: ' + err.message);
+  }
+}
+
 async function loadDataManager() {
   try {
     const res=await fetch('/api/admin/raw-sources',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({adminKey})});
@@ -1453,6 +1478,7 @@ function renderDataTable(sources){
       <td class="td-mono">${words.toLocaleString()}</td>
       <td class="td-mono">${date}</td>
       <td><div class="td-actions">
+        <button class="abtn abtn-view" onclick="exportSource(${s.id},'${s.name.replace(/'/g,"\\'")}')">Export</button>
         <button class="abtn abtn-edit" onclick="editSource(${s.id})">Edit</button>
         <button class="abtn abtn-del" onclick="deleteRawSource(${s.id},'${s.name.replace(/'/g,"\\'")}')">Delete</button>
       </div></td>
