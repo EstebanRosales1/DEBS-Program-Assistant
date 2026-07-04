@@ -1477,11 +1477,15 @@ function renderDataTable(sources){
       <td class="td-mono"><span class="type-${s.source_type}">${(s.source_type||'').toUpperCase()}</span></td>
       <td class="td-mono">${words.toLocaleString()}</td>
       <td class="td-mono">${date}</td>
-      <td><div class="td-actions">
-        <button class="abtn abtn-view" onclick="exportSource(${s.id},'${s.name.replace(/'/g,"\\'")}')">Export</button>
-        <button class="abtn abtn-edit" onclick="editSource(${s.id})">Edit</button>
-        <button class="abtn abtn-del" onclick="deleteRawSource(${s.id},'${s.name.replace(/'/g,"\\'")}')">Delete</button>
-      </div></td>
+      <td>
+        <div style="display:flex;flex-direction:column;gap:4px;">
+          <button class="abtn abtn-view" style="width:100%;" onclick="exportSource(${s.id},'${s.name.replace(/'/g,"\\'")}')">⬇ Export</button>
+          <div style="display:flex;gap:4px;">
+            <button class="abtn abtn-edit" onclick="editSource(${s.id})">Edit</button>
+            <button class="abtn abtn-del" onclick="deleteRawSource(${s.id},'${s.name.replace(/'/g,"\\'")}')">Del</button>
+          </div>
+        </div>
+      </td>
     </tr>`;
   }).join('');
 }
