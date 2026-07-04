@@ -222,24 +222,89 @@ async function processAndIngest(rawText, name, handbook, sourceType, sourceUrl =
 
 // ─── Search ────────────────────────────────────────────────────────────────
 
-async function searchHandbook(embedding, programFocus = '') {
-  const url = supabaseUrl('rpc/match_documents');
-  // Pull a slightly larger pool when a focus is set, so we can softly re-rank without losing cross-program matches
-  const matchCount = programFocus ? 8 : 5;
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: supabaseHeaders(),
-    body: JSON.stringify({ query_embedding: embedding, match_threshold: 0.2, match_count: matchCount })
+// ─── Detect short codes that FTS can't handle ──────────────────────────────
+// Postgres FTS ignores tokens under 3 chars (M3, B9, etc.)
+// and short numeric codes may not stem correctly
+function extractShortCodes(queryText) {
+  const STOP_WORDS = new Set(['a','i','is','it','in','of','to','the','for','and','or','how','do','what','does','can','my','me','who','why','when','are','was','be','an','at','by','if','no','so','up','we','he','she','they','his','her','its','has','had','not','but','this','that','with','from','have','will','would','could','should','may','which','their','our','your','you','he','she','we','they','did','get','got','set','mean','meds','alert','code','number','screen','medi-cal','calfresh','calworks','calwor']);
+  const tokens = queryText.split(/\s+/);
+  return tokens.filter(t => {
+    // Strip punctuation for length/type checks but keep original for ILIKE
+    const clean = t.replace(/[^a-zA-Z0-9]/g, '');
+    return clean.length >= 1 &&
+           clean.length <= 8 &&
+           !STOP_WORDS.has(clean.toLowerCase()) &&
+           // Must contain digit OR be all-caps OR contain hyphen (MEDS data elements like HCP-NUM)
+           (/\d/.test(clean) || clean === clean.toUpperCase() || t.includes('-'));
   });
-  const text = await response.text();
-  let results;
-  try { results = JSON.parse(text); } catch { throw new Error(`Search error: ${text}`); }
+}
 
-  if (!Array.isArray(results)) return results;
+// ─── ILIKE search for exact code matching ──────────────────────────────────
+async function ilikeSearch(queryText, matchCount = 10) {
+  try {
+    const response = await fetch(supabaseUrl('rpc/search_documents_ilike'), {
+      method: 'POST',
+      headers: supabaseHeaders(),
+      body: JSON.stringify({ query_text: queryText, match_count: matchCount })
+    });
+    const text = await response.text();
+    if (!text || text.trim() === '') return [];
+    const results = JSON.parse(text);
+    return Array.isArray(results) ? results : [];
+  } catch (err) {
+    console.error(`ILIKE search error: ${err.message}`);
+    return [];
+  }
+}
 
-  if (programFocus) {
-    // Soft boost: matching-handbook chunks get a small similarity bump for ranking purposes only.
-    // This never excludes other handbooks — it just nudges ties toward the worker's focus area.
+// ─── Keyword search via Postgres full-text search ──────────────────────────
+async function keywordSearch(queryText, matchCount = 10) {
+  try {
+    const response = await fetch(supabaseUrl('rpc/search_documents_keyword'), {
+      method: 'POST',
+      headers: supabaseHeaders(),
+      body: JSON.stringify({ query_text: queryText, match_count: matchCount })
+    });
+    const text = await response.text();
+    if (!text || text.trim() === '') return [];
+    const results = JSON.parse(text);
+    return Array.isArray(results) ? results : [];
+  } catch (err) {
+    console.error(`Keyword search error: ${err.message}`);
+    return [];
+  }
+}
+
+// ─── Hybrid search — semantic + keyword merged ─────────────────────────────
+async function searchHandbook(embedding, programFocus = '', queryText = '') {
+  // Detect short codes that FTS can't handle (M3, 309, SAR, etc.)
+  const shortCodes = queryText ? extractShortCodes(queryText) : [];
+  const hasShortCodes = shortCodes.length > 0;
+
+  // Run searches in parallel — use ILIKE for short codes, FTS for longer queries
+  const matchCount = programFocus ? 10 : 8;
+  const [semanticResults, keywordResults] = await Promise.all([
+    // Semantic vector search
+    fetch(supabaseUrl('rpc/match_documents'), {
+      method: 'POST',
+      headers: supabaseHeaders(),
+      body: JSON.stringify({ query_embedding: embedding, match_threshold: 0.2, match_count: matchCount })
+    }).then(r => r.text()).then(t => {
+      try { const d = JSON.parse(t); return Array.isArray(d) ? d : []; }
+      catch { return []; }
+    }),
+    // Keyword search — ILIKE for short codes, FTS for natural language
+    queryText
+      ? hasShortCodes
+        ? ilikeSearch(shortCodes.join(' '), 10)
+        : keywordSearch(queryText, 10)
+      : Promise.resolve([])
+  ]);
+
+  // If no keyword results fall back to pure semantic
+  if (keywordResults.length === 0) {
+    const results = semanticResults.slice(0, matchCount);
+    if (!programFocus) return results.slice(0, 5);
     const boosted = results.map(r => ({
       ...r,
       _rankScore: (r.similarity || 0) + (r.metadata?.handbook === programFocus ? 0.05 : 0)
@@ -248,7 +313,64 @@ async function searchHandbook(embedding, programFocus = '') {
     return boosted.slice(0, 5);
   }
 
-  return results.slice(0, 5);
+  // Normalize keyword ranks to 0-1 scale
+  const ranks = keywordResults.map(r => r.rank || 0);
+  const maxRank = Math.max(...ranks, 1);
+  const minRank = Math.min(...ranks, 0);
+  const rankRange = maxRank - minRank || 1;
+
+  // Build combined map
+  const combined = {};
+
+  // Add semantic results
+  for (const r of semanticResults) {
+    combined[r.id] = {
+      ...r,
+      semantic_score: r.similarity || 0,
+      keyword_score: 0,
+      match_type: 'semantic'
+    };
+  }
+
+  // Merge keyword results
+  for (const r of keywordResults) {
+    const normalizedRank = (r.rank - minRank) / rankRange;
+    if (combined[r.id]) {
+      combined[r.id].keyword_score = normalizedRank;
+      combined[r.id].match_type = 'both';
+    } else {
+      combined[r.id] = {
+        id: r.id,
+        content: r.content,
+        metadata: r.metadata,
+        similarity: 0,
+        semantic_score: 0,
+        keyword_score: normalizedRank,
+        match_type: 'keyword'
+      };
+    }
+  }
+
+  // Compute hybrid score — use semantic as base, keyword as additive boost
+  // This preserves semantic scores while giving keyword matches a meaningful lift
+  const ranked = Object.values(combined).map(item => {
+    // Keyword boost: up to +0.15 for a perfect keyword match
+    const keywordBoost = item.keyword_score * 0.15;
+    // Focus boost: +0.05 for matching the worker's program focus
+    const focusBoost = (programFocus && item.metadata?.handbook === programFocus) ? 0.05 : 0;
+    // Final score: semantic base + keyword boost + focus boost
+    const finalScore = item.semantic_score + keywordBoost + focusBoost;
+    return {
+      ...item,
+      similarity: Math.min(finalScore, 1.0), // cap at 1.0
+      _semanticScore: item.semantic_score,
+      _keywordBoost: keywordBoost,
+      _focusBoosted: focusBoost > 0
+    };
+  });
+
+  ranked.sort((a, b) => b.similarity - a.similarity);
+  return ranked.slice(0, 5);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -263,9 +385,9 @@ app.post('/api/chat', async (req, res) => {
     const question = messages[messages.length - 1].content;
     const history = messages.slice(0, -1);
     const embedding = await getEmbedding(question, 'query');
-    const chunks = await searchHandbook(embedding, programFocus);
+    const chunks = await searchHandbook(embedding, programFocus, question);
 
-    console.log(`Q: "${question}" | Focus: ${programFocus || 'none'} | Chunks: ${Array.isArray(chunks) ? chunks.length : 0} | Scores: ${Array.isArray(chunks) ? chunks.map(c => c.similarity?.toFixed(3)).join(', ') : 'none'}`);
+    console.log(`Q: "${question}" | Focus: ${programFocus || 'none'} | Chunks: ${Array.isArray(chunks) ? chunks.length : 0} | Scores: ${Array.isArray(chunks) ? chunks.map(c => c.similarity?.toFixed(3)).join(', ') : 'none'} | Types: ${Array.isArray(chunks) ? chunks.map(c => c.match_type || 'semantic').join(', ') : 'none'}`);
 
     const context = Array.isArray(chunks) && chunks.length > 0
       ? chunks.map((c, i) => `[Section ${i + 1}${c.metadata?.source ? ' — ' + c.metadata.source : ''}]\n${c.content}`).join('\n\n')
