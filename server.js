@@ -927,6 +927,41 @@ function scoreSourceQuality(raw_text, name) {
   return { score, flags, wordCount, lineCount, avgLineLen: Math.round(avgLineLen), wordsPerLine: Math.round(wordsPerLine * 10) / 10, numericDensity: Math.round(numericDensity * 100), shortLineRatio: Math.round(shortLineRatio * 100) };
 }
 
+// Lightweight score test — retrieval only, no Claude call, for quick scoring
+app.post('/api/admin/score-test', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  const { questions } = req.body;
+  if (!questions || !Array.isArray(questions)) return res.status(400).json({ error: 'questions array required' });
+
+  try {
+    const results = [];
+    for (const question of questions) {
+      const trimmed = question.trim();
+      if (!trimmed) continue;
+      try {
+        const embedding = await getEmbedding(trimmed, 'query');
+        const chunks = await searchHandbook(embedding, '', trimmed);
+        results.push({
+          question: trimmed,
+          scores: Array.isArray(chunks) ? chunks.map(c => c.similarity || 0) : [],
+          types: Array.isArray(chunks) ? chunks.map(c => c.match_type || 'semantic') : [],
+          sources: Array.isArray(chunks) ? chunks.map(c => c.metadata?.source || 'unknown') : [],
+          handbooks: Array.isArray(chunks) ? chunks.map(c => c.metadata?.handbook || 'unknown') : []
+        });
+      } catch (err) {
+        results.push({ question: trimmed, error: err.message, scores: [], types: [], sources: [], handbooks: [] });
+      }
+    }
+
+    const validResults = results.filter(r => r.scores.length > 0);
+    const avgTop = validResults.length > 0
+      ? validResults.reduce((sum, r) => sum + r.scores[0], 0) / validResults.length
+      : 0;
+
+    res.json({ results, avgTopScore: avgTop, total: results.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.post('/api/admin/scan-quality', async (req, res) => {
   if (!authCheck(req, res)) return;
   const { handbook, limit = 50 } = req.body;
