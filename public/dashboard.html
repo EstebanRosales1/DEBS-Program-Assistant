@@ -948,7 +948,56 @@ async function runQualityScan() {
 // SCORE TEST PANEL — Phase 1: UI only
 // ══════════════════════════════════════════════════════
 async function runScoreTest() {
-  setStatus('test-status', 'loading', '⏳ Coming in next step...');
+  const raw = document.getElementById('test-questions').value.trim();
+  if (!raw) return setStatus('test-status', 'error', 'Enter at least one question');
+  const questions = raw.split('\n').map(q => q.trim()).filter(q => q);
+
+  document.getElementById('test-run-btn').disabled = true;
+  setStatus('test-status', 'loading', `⏳ Testing ${questions.length} questions...`);
+  document.getElementById('test-results-card').style.display = 'none';
+
+  try {
+    const data = await apiFetch('/api/admin/score-test', { questions });
+    if (data.error) throw new Error(data.error);
+
+    const results = data.results || [];
+    document.getElementById('test-summary').textContent =
+      `${results.length} questions · avg top score ${data.avgTopScore.toFixed(3)}`;
+
+    document.getElementById('test-results-list').innerHTML = results.map(r => {
+      if (r.error) {
+        return `<div style="border:1px solid var(--cream-dark);border-radius:10px;padding:10px 14px;margin-bottom:.6rem;">
+          <div style="font-weight:600;font-size:.85rem;color:var(--navy);">${r.question}</div>
+          <div style="font-size:.78rem;color:var(--error);margin-top:4px;">❌ ${r.error}</div>
+        </div>`;
+      }
+      const top = r.scores[0] || 0;
+      const grade = top >= 0.70 ? 'A' : top >= 0.60 ? 'B' : top >= 0.55 ? 'C' : 'F';
+      const gradeColor = top >= 0.60 ? '#27ae60' : top >= 0.55 ? '#f39c12' : '#e74c3c';
+      const scoresList = r.scores.map((s, i) =>
+        `<span style="font-family:'DM Mono',monospace;font-size:.7rem;color:${i===0 ? gradeColor : 'var(--muted)'};">${s.toFixed(3)}${r.types[i]==='both' ? '🎯' : ''}</span>`
+      ).join(' · ');
+      const topSource = r.sources[0] || '—';
+      const topHandbook = r.handbooks[0] || '—';
+
+      return `<div style="border:1px solid var(--cream-dark);border-radius:10px;padding:10px 14px;margin-bottom:.6rem;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+          <div style="flex:1;min-width:0;">
+            <div style="font-weight:600;font-size:.85rem;color:var(--navy);">${r.question}</div>
+            <div style="font-size:.72rem;color:var(--muted);font-family:'DM Mono',monospace;margin-top:3px;">${topHandbook} · ${topSource}</div>
+            <div style="margin-top:5px;">${scoresList}</div>
+          </div>
+          <div style="font-family:'DM Serif Display',serif;font-size:1.3rem;font-weight:700;color:${gradeColor};flex-shrink:0;">${grade}</div>
+        </div>
+      </div>`;
+    }).join('');
+
+    document.getElementById('test-results-card').style.display = 'block';
+    setStatus('test-status', 'success', `✅ Test complete — avg top score ${data.avgTopScore.toFixed(3)}`);
+  } catch(err) {
+    setStatus('test-status', 'error', '❌ ' + err.message);
+  }
+  document.getElementById('test-run-btn').disabled = false;
 }
 
 async function reformatSource(id, name, btn) {
