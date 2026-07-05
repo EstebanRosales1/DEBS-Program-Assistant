@@ -231,6 +231,7 @@ tr:hover td{background:rgba(247,243,235,.5);}
     <button class="tab" onclick="showTab('ratings')">⭐ Ratings</button>
     <button class="tab" onclick="showTab('optimize')">🔧 Optimize</button>
     <button class="tab" onclick="showTab('quality')">🔍 Quality</button>
+    <button class="tab" onclick="showTab('test')">🎯 Test</button>
   </div>
 
   <div class="content">
@@ -696,6 +697,33 @@ tr:hover td{background:rgba(247,243,235,.5);}
       </div>
     </div>
 
+    <!-- ══ TAB: TEST ══ -->
+    <div class="panel" id="panel-test">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-icon icon-db">🎯</div>
+          <div><div class="card-title">Score Test Panel</div><div class="card-desc">Run a batch of test questions and see similarity scores instantly — no Render logs needed</div></div>
+        </div>
+
+        <label>Test Questions — one per line</label>
+        <textarea id="test-questions" style="min-height:200px;font-family:'DM Mono',monospace;font-size:.82rem;" placeholder="What is HCP code 309?
+What is aid code M1?
+What does MEDS alert 0461 mean?
+What are the income limits for Medi-Cal?"></textarea>
+
+        <button class="btn" id="test-run-btn" onclick="runScoreTest()">▶ Run Test</button>
+        <div class="status" id="test-status"></div>
+      </div>
+
+      <div class="card" id="test-results-card" style="display:none;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+          <div style="font-family:'DM Serif Display',serif;font-size:1rem;color:var(--navy);">Results</div>
+          <div style="font-size:.72rem;font-family:'DM Mono',monospace;color:var(--muted);" id="test-summary"></div>
+        </div>
+        <div id="test-results-list"></div>
+      </div>
+    </div>
+
   </div><!-- end content -->
 </div><!-- end shell -->
 
@@ -778,7 +806,7 @@ function logout() {
 // ══════════════════════════════════════════════════════
 function showTab(name) {
   document.querySelectorAll('.tab').forEach((t,i)=>{
-    const names=['add','loader','kb','data','versions','ratings','optimize','quality'];
+    const names=['add','loader','kb','data','versions','ratings','optimize','quality','test'];
     t.classList.toggle('active', names[i]===name);
   });
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
@@ -914,6 +942,13 @@ async function runQualityScan() {
     setStatus('quality-status', 'error', '❌ ' + err.message);
     document.getElementById('quality-list').innerHTML = '<div class="empty-state">Scan failed</div>';
   }
+}
+
+// ══════════════════════════════════════════════════════
+// SCORE TEST PANEL — Phase 1: UI only
+// ══════════════════════════════════════════════════════
+async function runScoreTest() {
+  setStatus('test-status', 'loading', '⏳ Coming in next step...');
 }
 
 async function reformatSource(id, name, btn) {
