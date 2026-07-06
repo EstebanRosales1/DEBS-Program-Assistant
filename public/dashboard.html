@@ -109,7 +109,7 @@ input[type=file]{display:none;}
 .filters{display:flex;gap:.8rem;margin-bottom:1rem;flex-wrap:wrap;}
 .filter-input{border:1.5px solid var(--cream-dark);border-radius:8px;padding:8px 12px;font-size:.85rem;font-family:'DM Sans',sans-serif;background:var(--white);outline:none;transition:border-color .2s;margin-bottom:0;}
 .filter-input:focus{border-color:var(--gold);}
-.table-wrap{background:var(--white);border:1px solid var(--cream-dark);border-radius:14px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.04);}
+.table-wrap{background:var(--white);border:1px solid var(--cream-dark);border-radius:14px;overflow-x:auto;box-shadow:0 2px 8px rgba(0,0,0,.04);}
 table{width:100%;border-collapse:collapse;}
 th{background:var(--navy);color:rgba(255,255,255,.7);font-family:'DM Mono',monospace;font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;padding:12px 16px;text-align:left;font-weight:400;}
 td{padding:11px 16px;border-bottom:1px solid var(--cream-dark);font-size:.84rem;vertical-align:middle;}
@@ -118,7 +118,7 @@ tr:hover td{background:rgba(247,243,235,.5);}
 .td-name{font-weight:500;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .td-mono{font-family:'DM Mono',monospace;font-size:.72rem;color:var(--muted);}
 .td-preview{max-width:260px;color:var(--muted);font-size:.79rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.td-actions{display:flex;gap:5px;}
+.td-actions{display:flex;gap:4px;flex-wrap:wrap;}
 .abtn{font-size:.72rem;padding:4px 10px;border-radius:6px;cursor:pointer;border:1px solid;font-family:'DM Mono',monospace;}
 .abtn-view{background:#f0f4ff;color:#3b5bdb;border-color:#c5d0fc;}
 .abtn-edit{background:#fff8e8;color:#7a5c1e;border-color:var(--gold-light);}
@@ -231,6 +231,7 @@ tr:hover td{background:rgba(247,243,235,.5);}
     <button class="tab" onclick="showTab('ratings')">⭐ Ratings</button>
     <button class="tab" onclick="showTab('optimize')">🔧 Optimize</button>
     <button class="tab" onclick="showTab('quality')">🔍 Quality</button>
+    <button class="tab" onclick="showTab('test')">🎯 Test</button>
   </div>
 
   <div class="content">
@@ -696,6 +697,33 @@ tr:hover td{background:rgba(247,243,235,.5);}
       </div>
     </div>
 
+    <!-- ══ TAB: TEST ══ -->
+    <div class="panel" id="panel-test">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-icon icon-db">🎯</div>
+          <div><div class="card-title">Score Test Panel</div><div class="card-desc">Run a batch of test questions and see similarity scores instantly — no Render logs needed</div></div>
+        </div>
+
+        <label>Test Questions — one per line</label>
+        <textarea id="test-questions" style="min-height:200px;font-family:'DM Mono',monospace;font-size:.82rem;" placeholder="What is HCP code 309?
+What is aid code M1?
+What does MEDS alert 0461 mean?
+What are the income limits for Medi-Cal?"></textarea>
+
+        <button class="btn" id="test-run-btn" onclick="runScoreTest()">▶ Run Test</button>
+        <div class="status" id="test-status"></div>
+      </div>
+
+      <div class="card" id="test-results-card" style="display:none;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+          <div style="font-family:'DM Serif Display',serif;font-size:1rem;color:var(--navy);">Results</div>
+          <div style="font-size:.72rem;font-family:'DM Mono',monospace;color:var(--muted);" id="test-summary"></div>
+        </div>
+        <div id="test-results-list"></div>
+      </div>
+    </div>
+
   </div><!-- end content -->
 </div><!-- end shell -->
 
@@ -778,7 +806,7 @@ function logout() {
 // ══════════════════════════════════════════════════════
 function showTab(name) {
   document.querySelectorAll('.tab').forEach((t,i)=>{
-    const names=['add','loader','kb','data','versions','ratings','optimize','quality'];
+    const names=['add','loader','kb','data','versions','ratings','optimize','quality','test'];
     t.classList.toggle('active', names[i]===name);
   });
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
@@ -914,6 +942,62 @@ async function runQualityScan() {
     setStatus('quality-status', 'error', '❌ ' + err.message);
     document.getElementById('quality-list').innerHTML = '<div class="empty-state">Scan failed</div>';
   }
+}
+
+// ══════════════════════════════════════════════════════
+// SCORE TEST PANEL — Phase 1: UI only
+// ══════════════════════════════════════════════════════
+async function runScoreTest() {
+  const raw = document.getElementById('test-questions').value.trim();
+  if (!raw) return setStatus('test-status', 'error', 'Enter at least one question');
+  const questions = raw.split('\n').map(q => q.trim()).filter(q => q);
+
+  document.getElementById('test-run-btn').disabled = true;
+  setStatus('test-status', 'loading', `⏳ Testing ${questions.length} questions...`);
+  document.getElementById('test-results-card').style.display = 'none';
+
+  try {
+    const data = await apiFetch('/api/admin/score-test', { questions });
+    if (data.error) throw new Error(data.error);
+
+    const results = data.results || [];
+    document.getElementById('test-summary').textContent =
+      `${results.length} questions · avg top score ${data.avgTopScore.toFixed(3)}`;
+
+    document.getElementById('test-results-list').innerHTML = results.map(r => {
+      if (r.error) {
+        return `<div style="border:1px solid var(--cream-dark);border-radius:10px;padding:10px 14px;margin-bottom:.6rem;">
+          <div style="font-weight:600;font-size:.85rem;color:var(--navy);">${r.question}</div>
+          <div style="font-size:.78rem;color:var(--error);margin-top:4px;">❌ ${r.error}</div>
+        </div>`;
+      }
+      const top = r.scores[0] || 0;
+      const grade = top >= 0.70 ? 'A' : top >= 0.60 ? 'B' : top >= 0.55 ? 'C' : 'F';
+      const gradeColor = top >= 0.60 ? '#27ae60' : top >= 0.55 ? '#f39c12' : '#e74c3c';
+      const scoresList = r.scores.map((s, i) =>
+        `<span style="font-family:'DM Mono',monospace;font-size:.7rem;color:${i===0 ? gradeColor : 'var(--muted)'};">${s.toFixed(3)}${r.types[i]==='both' ? '🎯' : ''}</span>`
+      ).join(' · ');
+      const topSource = r.sources[0] || '—';
+      const topHandbook = r.handbooks[0] || '—';
+
+      return `<div style="border:1px solid var(--cream-dark);border-radius:10px;padding:10px 14px;margin-bottom:.6rem;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+          <div style="flex:1;min-width:0;">
+            <div style="font-weight:600;font-size:.85rem;color:var(--navy);">${r.question}</div>
+            <div style="font-size:.72rem;color:var(--muted);font-family:'DM Mono',monospace;margin-top:3px;">${topHandbook} · ${topSource}</div>
+            <div style="margin-top:5px;">${scoresList}</div>
+          </div>
+          <div style="font-family:'DM Serif Display',serif;font-size:1.3rem;font-weight:700;color:${gradeColor};flex-shrink:0;">${grade}</div>
+        </div>
+      </div>`;
+    }).join('');
+
+    document.getElementById('test-results-card').style.display = 'block';
+    setStatus('test-status', 'success', `✅ Test complete — avg top score ${data.avgTopScore.toFixed(3)}`);
+  } catch(err) {
+    setStatus('test-status', 'error', '❌ ' + err.message);
+  }
+  document.getElementById('test-run-btn').disabled = false;
 }
 
 async function reformatSource(id, name, btn) {
@@ -1416,6 +1500,31 @@ async function deleteSource(source) {
 // ══════════════════════════════════════════════════════
 // DATA MANAGER
 // ══════════════════════════════════════════════════════
+async function exportSource(id, name) {
+  try {
+    const res = await fetch('/api/admin/export-source', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminKey, id })
+    });
+    const text = await res.text();
+    if (text.trim().startsWith('<')) throw new Error('Server error');
+    const data = JSON.parse(text);
+    if (data.error) throw new Error(data.error);
+
+    // Download as text file
+    const blob = new Blob([data.raw_text], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name.replace(/[^a-z0-9]/gi, '_') + '_raw.txt';
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch(err) {
+    alert('Export failed: ' + err.message);
+  }
+}
+
 async function loadDataManager() {
   try {
     const res=await fetch('/api/admin/raw-sources',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({adminKey})});
@@ -1452,10 +1561,15 @@ function renderDataTable(sources){
       <td class="td-mono"><span class="type-${s.source_type}">${(s.source_type||'').toUpperCase()}</span></td>
       <td class="td-mono">${words.toLocaleString()}</td>
       <td class="td-mono">${date}</td>
-      <td><div class="td-actions">
-        <button class="abtn abtn-edit" onclick="editSource(${s.id})">Edit</button>
-        <button class="abtn abtn-del" onclick="deleteRawSource(${s.id},'${s.name.replace(/'/g,"\\'")}')">Delete</button>
-      </div></td>
+      <td>
+        <div style="display:flex;flex-direction:column;gap:4px;">
+          <button class="abtn abtn-view" style="width:100%;" onclick="exportSource(${s.id},'${s.name.replace(/'/g,"\\'")}')">⬇ Export</button>
+          <div style="display:flex;gap:4px;">
+            <button class="abtn abtn-edit" onclick="editSource(${s.id})">Edit</button>
+            <button class="abtn abtn-del" onclick="deleteRawSource(${s.id},'${s.name.replace(/'/g,"\\'")}')">Del</button>
+          </div>
+        </div>
+      </td>
     </tr>`;
   }).join('');
 }

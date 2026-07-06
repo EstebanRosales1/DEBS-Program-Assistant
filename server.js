@@ -809,6 +809,29 @@ app.post('/api/admin/delete-source', async (req, res) => {
 });
 
 // Export all raw sources as JSON
+// Export single source raw_text
+app.post('/api/admin/export-source', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  const { id } = req.body;
+  if (!id) return res.status(400).json({ error: 'id required' });
+  try {
+    const response = await fetch(supabaseUrl(`raw_sources?id=eq.${id}&select=id,name,handbook,raw_text,working_text`), {
+      headers: supabaseHeaders()
+    });
+    const data = await response.json();
+    if (!Array.isArray(data) || !data[0]) return res.status(404).json({ error: 'Source not found' });
+    const source = data[0];
+    res.json({
+      id: source.id,
+      name: source.name,
+      handbook: source.handbook,
+      raw_text: source.raw_text || '',
+      working_text: source.working_text || null,
+      has_working_text: !!source.working_text
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.post('/api/admin/export', async (req, res) => {
   if (!authCheck(req, res)) return;
   try {
@@ -903,6 +926,41 @@ function scoreSourceQuality(raw_text, name) {
 
   return { score, flags, wordCount, lineCount, avgLineLen: Math.round(avgLineLen), wordsPerLine: Math.round(wordsPerLine * 10) / 10, numericDensity: Math.round(numericDensity * 100), shortLineRatio: Math.round(shortLineRatio * 100) };
 }
+
+// Lightweight score test — retrieval only, no Claude call, for quick scoring
+app.post('/api/admin/score-test', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  const { questions } = req.body;
+  if (!questions || !Array.isArray(questions)) return res.status(400).json({ error: 'questions array required' });
+
+  try {
+    const results = [];
+    for (const question of questions) {
+      const trimmed = question.trim();
+      if (!trimmed) continue;
+      try {
+        const embedding = await getEmbedding(trimmed, 'query');
+        const chunks = await searchHandbook(embedding, '', trimmed);
+        results.push({
+          question: trimmed,
+          scores: Array.isArray(chunks) ? chunks.map(c => c.similarity || 0) : [],
+          types: Array.isArray(chunks) ? chunks.map(c => c.match_type || 'semantic') : [],
+          sources: Array.isArray(chunks) ? chunks.map(c => c.metadata?.source || 'unknown') : [],
+          handbooks: Array.isArray(chunks) ? chunks.map(c => c.metadata?.handbook || 'unknown') : []
+        });
+      } catch (err) {
+        results.push({ question: trimmed, error: err.message, scores: [], types: [], sources: [], handbooks: [] });
+      }
+    }
+
+    const validResults = results.filter(r => r.scores.length > 0);
+    const avgTop = validResults.length > 0
+      ? validResults.reduce((sum, r) => sum + r.scores[0], 0) / validResults.length
+      : 0;
+
+    res.json({ results, avgTopScore: avgTop, total: results.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
 app.post('/api/admin/scan-quality', async (req, res) => {
   if (!authCheck(req, res)) return;
@@ -1597,6 +1655,28 @@ app.post('/api/admin/delete-rating', async (req, res) => {
 // ══════════════════════════════════════════════════════════════════════════════
 // ROUTES
 // ══════════════════════════════════════════════════════════════════════════════
+// Load parsed reference chunks into documents
+app.post('/api/admin/load-reference-chunks', async (req, res) => {
+  if (!authCheck(req, res)) return;
+  const { sourceName, handbook, chunks } = req.body;
+  if (!chunks || !Array.isArray(chunks)) return res.status(400).json({ error: 'chunks required' });
+
+  // Delete existing chunks for this source
+  await fetch(
+    supabaseUrl(`documents?metadata->>source=eq.${encodeURIComponent(sourceName)}&metadata->>handbook=eq.${encodeURIComponent(handbook)}`),
+    { method: 'DELETE', headers: supabaseHeaders() }
+  );
+  console.log(`Deleted existing chunks for "${sourceName}"`);
+
+  // Respond immediately
+  res.json({ success: true, message: `Loading ${chunks.length} chunks for "${sourceName}"`, total: chunks.length });
+
+  // Embed and store in background
+  (async () => {
+    const { stored, errors } = await embedAndStoreChunks(chunks, `[ref-${sourceName}]`);
+    console.log(`✅ Loaded ${stored} chunks for "${sourceName}" | ${errors} errors`);
+  })();
+});
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', supabase: !!SUPABASE_URL, anthropic: !!ANTHROPIC_API_KEY, voyage: !!VOYAGE_API_KEY });
@@ -1850,6 +1930,14 @@ async function runOptimizationPipeline(sources, config, progressCallback) {
   let processed = 0;
 
   for (const source of sources) {
+    // Skip sources with manual chunk strategy — their chunks are managed separately
+    if (source.chunk_strategy === 'manual') {
+      console.log(`⏭️  Skipping "${source.name}" — manual chunk strategy`);
+      processed++;
+      if (progressCallback) progressCallback(processed, sources.length, source.name, 0);
+      continue;
+    }
+
     // Use working_text if reformatted, fall back to master raw_text
     let text = source.working_text || source.raw_text || '';
 
@@ -1945,7 +2033,7 @@ app.post('/api/admin/optimize/preview', async (req, res) => {
   try {
     // Fetch a sample of sources (first 5) for preview
     const response = await fetch(
-      supabaseUrl(`raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=id,name,handbook,raw_text,working_text,metadata&limit=5`),
+      supabaseUrl(`raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=id,name,handbook,raw_text,working_text,metadata,chunk_strategy&limit=5`),
       { headers: supabaseHeaders() }
     );
     const sources = await response.json();
@@ -2022,7 +2110,7 @@ app.post('/api/admin/optimize/run', async (req, res) => {
       const batchSize = 200;
       while (offset < totalSources) {
         const batchRes = await fetch(
-          supabaseUrl(`raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=id,name,handbook,raw_text,working_text,metadata&order=name.asc&limit=${batchSize}&offset=${offset}`),
+          supabaseUrl(`raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=id,name,handbook,raw_text,working_text,metadata,chunk_strategy&order=name.asc&limit=${batchSize}&offset=${offset}`),
           { headers: supabaseHeaders({ 'Range': `${offset}-${offset + batchSize - 1}` }) }
         );
         const batch = await batchRes.json();
@@ -2108,7 +2196,7 @@ app.post('/api/admin/rebuild-from-archive', async (req, res) => {
       const batchSize = 200;
       while (offset < totalSources) {
         const batchRes = await fetch(
-          supabaseUrl(`raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=id,name,handbook,raw_text,working_text,metadata&order=name.asc&limit=${batchSize}&offset=${offset}`),
+          supabaseUrl(`raw_sources?handbook=eq.${encodeURIComponent(handbook)}&select=id,name,handbook,raw_text,working_text,metadata,chunk_strategy&order=name.asc&limit=${batchSize}&offset=${offset}`),
           { headers: supabaseHeaders({ 'Range': `${offset}-${offset + batchSize - 1}` }) }
         );
         const batch = await batchRes.json();
