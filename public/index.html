@@ -55,6 +55,9 @@
   .message.user .bubble{background:var(--navy);color:var(--white);border-top-right-radius:4px;}
   .bubble strong{color:var(--navy);}
   .message.user .bubble strong{color:var(--gold-light);}
+  .bubble a{color:var(--navy);font-weight:600;text-decoration:underline;text-decoration-color:var(--gold-light);text-underline-offset:2px;}
+  .bubble a:hover{color:var(--gold-dark,#a67c00);}
+  .message.user .bubble a{color:var(--gold-light);text-decoration-color:rgba(255,255,255,.5);}
   .bubble ul,.bubble ol{padding-left:1.2rem;margin:.4rem 0;}
   .bubble li{margin-bottom:.25rem;}
 
@@ -187,6 +190,7 @@ function handleKey(e) {
 
 function formatText(t) {
   return t
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,'<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
     .replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>')
     .replace(/^- (.*$)/gm,'<li>$1</li>')
     .replace(/(<li>.*<\/li>)/gs,'<ul>$1</ul>')
