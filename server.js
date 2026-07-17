@@ -276,7 +276,90 @@ async function keywordSearch(queryText, matchCount = 10) {
 }
 
 // ─── Hybrid search — semantic + keyword merged ─────────────────────────────
-async function searchHandbook(embedding, programFocus = '', queryText = '') {
+// Paired-source completion: if one chunk from a known multi-part reference
+// table is retrieved, ensure its sibling chunk(s) are included too, since
+// these tables are only useful when read together (e.g. FPL Table 1 + Table 2).
+const PAIRED_SOURCES = [
+  'Federal Poverty Level Programs Monthly Income Comparison Chart'
+];
+
+async function applyPairedSourceCompletion(top5, allCandidates) {
+  const hasPairedMatch = top5.some(c => PAIRED_SOURCES.includes(c.metadata?.source));
+  if (!hasPairedMatch) return top5;
+
+  const matchedSource = top5.find(c => PAIRED_SOURCES.includes(c.metadata?.source))?.metadata?.source;
+
+  let missingSiblings = allCandidates.filter(c =>
+    PAIRED_SOURCES.includes(c.metadata?.source) &&
+    !top5.some(t => t.id === c.id)
+  );
+
+  // If the sibling wasn't even in the candidate pool (scored too low to surface),
+  // fetch it directly by source name so paired tables are never split apart.
+  if (missingSiblings.length === 0 && matchedSource) {
+    try {
+      const res = await fetch(
+        supabaseUrl(`documents?select=id,content,metadata&metadata->>source=eq.${encodeURIComponent(matchedSource)}`),
+        { headers: supabaseHeaders() }
+      );
+      const allSourceChunks = await res.json();
+      if (Array.isArray(allSourceChunks)) {
+        missingSiblings = allSourceChunks
+          .filter(c => !top5.some(t => t.id === c.id))
+          .map(c => ({ ...c, similarity: 0.5, match_type: 'paired' }));
+      }
+    } catch (err) {
+      console.error(`Paired source fetch failed: ${err.message}`);
+    }
+  }
+
+  if (missingSiblings.length === 0) return top5;
+
+  const lowestIdx = top5
+    .map((c, i) => ({ c, i }))
+    .filter(x => !PAIRED_SOURCES.includes(x.c.metadata?.source))
+    .sort((a, b) => a.c.similarity - b.c.similarity)[0]?.i;
+
+  if (lowestIdx !== undefined) {
+    top5[lowestIdx] = missingSiblings[0];
+  } else {
+    top5.push(missingSiblings[0]);
+  }
+  return top5;
+}
+
+// ─── Intent-based forced retrieval ──────────────────────────────────────────
+// For content that's structurally hard to match on pure text similarity
+// (e.g. a chart that's mostly a link, not descriptive prose), detect the
+// worker's intent directly with a pattern and guarantee the source is
+// included — rather than hoping semantic/keyword search surfaces it.
+const FORCED_SOURCES = [
+  {
+    source: 'Federal Poverty Level Programs Monthly Income Comparison Chart',
+    handbook: 'Medi-Cal',
+    // Matches: income limit, FPL, household of N, family size N, poverty level,
+    // QMB/SLMB/WDP/MCAP/CCHIP/TMC program names, age-based coverage questions
+    pattern: /(income\s*limit|fpl|federal\s*poverty|household\s*of\s*\d|family\s*size|poverty\s*level|\bqmb\b|\bslmb\b|\bwdp\b|\bmcap\b|\bcchip\b|\btmc\b|qualified\s*individual|new\s*adult\s*group|caretaker\s*relative)/i
+  }
+];
+
+async function getForcedChunk(source, handbook) {
+  try {
+    const res = await fetch(
+      supabaseUrl(`documents?select=id,content,metadata&metadata->>source=eq.${encodeURIComponent(source)}&metadata->>handbook=eq.${encodeURIComponent(handbook)}&limit=1`),
+      { headers: supabaseHeaders() }
+    );
+    const rows = await res.json();
+    if (Array.isArray(rows) && rows[0]) {
+      return { ...rows[0], similarity: 0.55, match_type: 'forced' };
+    }
+  } catch (err) {
+    console.error(`Forced chunk fetch failed for "${source}": ${err.message}`);
+  }
+  return null;
+}
+
+async function searchHandbookCore(embedding, programFocus = '', queryText = '') {
   // Detect short codes that FTS can't handle (M3, 309, SAR, etc.)
   const shortCodes = queryText ? extractShortCodes(queryText) : [];
   const hasShortCodes = shortCodes.length > 0;
@@ -304,13 +387,18 @@ async function searchHandbook(embedding, programFocus = '', queryText = '') {
   // If no keyword results fall back to pure semantic
   if (keywordResults.length === 0) {
     const results = semanticResults.slice(0, matchCount);
-    if (!programFocus) return results.slice(0, 5);
-    const boosted = results.map(r => ({
-      ...r,
-      _rankScore: (r.similarity || 0) + (r.metadata?.handbook === programFocus ? 0.05 : 0)
-    }));
-    boosted.sort((a, b) => b._rankScore - a._rankScore);
-    return boosted.slice(0, 5);
+    let finalResults;
+    if (!programFocus) {
+      finalResults = results.slice(0, 5);
+    } else {
+      const boosted = results.map(r => ({
+        ...r,
+        _rankScore: (r.similarity || 0) + (r.metadata?.handbook === programFocus ? 0.05 : 0)
+      }));
+      boosted.sort((a, b) => b._rankScore - a._rankScore);
+      finalResults = boosted.slice(0, 5);
+    }
+    return await applyPairedSourceCompletion(finalResults, results);
   }
 
   // Normalize keyword ranks to 0-1 scale
@@ -370,7 +458,37 @@ async function searchHandbook(embedding, programFocus = '', queryText = '') {
   });
 
   ranked.sort((a, b) => b.similarity - a.similarity);
-  return ranked.slice(0, 5);
+  const top5 = ranked.slice(0, 5);
+  return await applyPairedSourceCompletion(top5, ranked);
+}
+
+// Public entry point — runs core retrieval, then guarantees any
+// intent-matched forced sources are present in the final results.
+async function searchHandbook(embedding, programFocus = '', queryText = '') {
+  const results = await searchHandbookCore(embedding, programFocus, queryText);
+
+  if (!queryText) return results;
+
+  for (const forced of FORCED_SOURCES) {
+    if (!forced.pattern.test(queryText)) continue;
+    const alreadyPresent = results.some(r => r.metadata?.source === forced.source);
+    if (alreadyPresent) continue;
+
+    const forcedChunk = await getForcedChunk(forced.source, forced.handbook);
+    if (!forcedChunk) continue;
+
+    // Replace the lowest-scoring result with the forced chunk
+    const lowestIdx = results
+      .map((c, i) => ({ c, i }))
+      .sort((a, b) => (a.c.similarity || 0) - (b.c.similarity || 0))[0]?.i;
+    if (lowestIdx !== undefined) {
+      results[lowestIdx] = forcedChunk;
+    } else {
+      results.push(forcedChunk);
+    }
+  }
+
+  return results;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
