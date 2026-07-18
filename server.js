@@ -335,11 +335,13 @@ async function applyPairedSourceCompletion(top5, allCandidates) {
 // included — rather than hoping semantic/keyword search surfaces it.
 const FORCED_SOURCES = [
   {
-    source: 'Federal Poverty Level Programs Monthly Income Comparison Chart',
-    handbook: 'Medi-Cal',
-    // Matches: income limit, FPL, household of N, family size N, poverty level,
-    // QMB/SLMB/WDP/MCAP/CCHIP/TMC program names, age-based coverage questions
-    pattern: /(income\s*limit|fpl|federal\s*poverty|household\s*of\s*\d|family\s*size|poverty\s*level|\bqmb\b|\bslmb\b|\bwdp\b|\bmcap\b|\bcchip\b|\btmc\b|qualified\s*individual|new\s*adult\s*group|caretaker\s*relative)/i
+    source: 'Chart Book — CalWORKs, CalFresh, and Medi-Cal Income & Program Limits',
+    handbook: 'Multi-Program',
+    // Matches: income limit, FPL, household/family size N, poverty level,
+    // Medi-Cal program names (QMB/SLMB/WDP/MCAP/CCHIP/TMC), CalWORKs terms
+    // (MBSAC/MAP/IRT), CalFresh terms (gross income/allotment), and
+    // Sneede/MSP/A&D/SSI reference figures.
+    pattern: /(income\s*limit|fpl|federal\s*poverty|household\s*of\s*\d|family\s*size|poverty\s*level|\bqmb\b|\bslmb\b|\bwdp\b|\bmcap\b|\bcchip\b|\btmc\b|qualified\s*individual|new\s*adult\s*group|caretaker\s*relative|\bmbsac\b|\bmap\b|\birt\b|gross\s*income|\ballotment\b|\bsneede\b|\bmsp\b|\ba\s*&\s*d\b|aged\s*(and|&)\s*disabled|\bssi\b|\bssp\b|property\s*limit|income\s*reporting\s*threshold|chart\s*book)/i
   }
 ];
 
